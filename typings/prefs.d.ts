@@ -74,6 +74,10 @@ declare namespace _ZoteroTypes {
       "codexAppServerLastAllocatedGlobalConversationKey": number;
       "codexAppServerLastAllocatedPaperConversationKey": number;
       "enableAntigravityMode": boolean;
+      "cliProxyMode": string;
+      "cliProxyProtocol": string;
+      "cliProxyHost": string;
+      "cliProxyPort": string;
       "antigravityPath": string;
       "antigravityModel": string;
       "antigravityEffort": string;
