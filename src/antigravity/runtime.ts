@@ -27,6 +27,13 @@ import {
   getAntigravityPermissionModePref,
   getAntigravityRuntimeModelPref,
 } from "./prefs";
+import {
+  registerScopedZoteroMcpScope,
+  getZoteroMcpServerUrl,
+  getOrCreateZoteroMcpBearerToken,
+} from "../agent/mcp/server";
+import type { TurnPaperScope } from "../agent/context/turnPaperScope";
+import type { AttachedConversationRef } from "../shared/types";
 
 /**
  * The system context last sent into each agy conversation, by conversation
@@ -61,6 +68,11 @@ export type AntigravityPanelTurn = {
    * the transcript the panel shows.
    */
   freshConversation?: boolean;
+  libraryID?: number;
+  paperItemID?: number;
+  activeItemId?: number;
+  turnPaperScope?: TurnPaperScope;
+  attachedConversationScope?: AttachedConversationRef[];
 };
 
 /** One tool step of an agy turn, as the panel's activity trace shows it. */
@@ -124,6 +136,72 @@ function formatToolStatus(toolName: string, summary?: string): string {
 /** A file holding a turn's context for agy to read, and its folder. */
 export type AgyContextFile = { path: string; dir: string };
 
+export type AgySessionWorkspace = {
+  dir: string;
+  settingsPath: string;
+};
+
+async function prepareAgySessionWorkspace(params: {
+  conversationKey: number;
+  scopeToken: string;
+  mcpServerUrl: string;
+  mcpBearerToken: string;
+}): Promise<AgySessionWorkspace | null> {
+  const temp = (
+    globalThis as { Zotero?: { getTempDirectory?: () => { path?: string } } }
+  ).Zotero?.getTempDirectory?.()?.path?.trim();
+  if (!temp) return null;
+  const dir = joinLocalPath(
+    temp,
+    `llm-for-zotero-agy-session-${params.conversationKey}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  );
+  const agentsDir = joinLocalPath(dir, ".agents");
+  const mcpConfigPath = joinLocalPath(agentsDir, "mcp_config.json");
+  const settingsPath = joinLocalPath(dir, "settings.json");
+
+  try {
+    if (!(await ensureDir(agentsDir))) return null;
+
+    const mcpConfig = {
+      mcpServers: {
+        zotero: {
+          url: params.mcpServerUrl,
+          headers: {
+            Authorization: `Bearer ${params.mcpBearerToken}`,
+            "X-LLM-For-Zotero-Scope": params.scopeToken,
+          },
+          timeout: 600,
+        },
+      },
+    };
+    const mcpConfigBytes = new TextEncoder().encode(
+      JSON.stringify(mcpConfig, null, 2),
+    );
+    if (!(await writeFileBytes(mcpConfigPath, mcpConfigBytes))) {
+      await removePathQuietly(dir);
+      return null;
+    }
+
+    const settings = {
+      permissions: {
+        allow: ["mcp(zotero/*)"],
+      },
+    };
+    const settingsBytes = new TextEncoder().encode(
+      JSON.stringify(settings, null, 2),
+    );
+    if (!(await writeFileBytes(settingsPath, settingsBytes))) {
+      await removePathQuietly(dir);
+      return null;
+    }
+
+    return { dir, settingsPath };
+  } catch {
+    await removePathQuietly(dir);
+    return null;
+  }
+}
+
 function joinLocalPath(...parts: string[]): string {
   const pathUtils = (
     globalThis as { PathUtils?: { join?: (...parts: string[]) => string } }
@@ -178,6 +256,16 @@ export type AntigravityTurnDeps = {
     permissionMode: ReturnType<typeof getAntigravityPermissionModePref>;
     cwd?: string;
   };
+  registerMcpScope?: typeof registerScopedZoteroMcpScope;
+  getMcpServerUrl?: typeof getZoteroMcpServerUrl;
+  getMcpBearerToken?: typeof getOrCreateZoteroMcpBearerToken;
+  prepareWorkspace?: (params: {
+    conversationKey: number;
+    scopeToken: string;
+    mcpServerUrl: string;
+    mcpBearerToken: string;
+  }) => Promise<AgySessionWorkspace | null>;
+  removeWorkspace?: (workspace: AgySessionWorkspace) => Promise<void>;
 };
 
 const DEFAULT_TURN_DEPS: AntigravityTurnDeps = {
@@ -196,6 +284,11 @@ const DEFAULT_TURN_DEPS: AntigravityTurnDeps = {
     permissionMode: getAntigravityPermissionModePref(),
     cwd: resolveAntigravityRuntimeCwd(),
   }),
+  registerMcpScope: registerScopedZoteroMcpScope,
+  getMcpServerUrl: getZoteroMcpServerUrl,
+  getMcpBearerToken: getOrCreateZoteroMcpBearerToken,
+  prepareWorkspace: prepareAgySessionWorkspace,
+  removeWorkspace: (workspace) => removePathQuietly(workspace.dir),
 };
 
 /** One Antigravity turn from the panel, shared by the send and retry flows. */
@@ -246,22 +339,65 @@ export async function runAntigravityPanelTurn(
       : `<question>\n${question}\n</question>\n\n${context}`;
   }
 
+  let scopedMcp: ReturnType<typeof registerScopedZoteroMcpScope> | null = null;
+  let workspace: AgySessionWorkspace | null = null;
+  if (deps.registerMcpScope && deps.prepareWorkspace) {
+    try {
+      scopedMcp = deps.registerMcpScope({
+        runtimeAuthority: "antigravity",
+        conversationKey: turn.conversationKey,
+        libraryID: turn.libraryID,
+        paperItemID: turn.paperItemID,
+        activeItemId: turn.activeItemId,
+        turnPaperScope: turn.turnPaperScope,
+        attachedConversationScope: turn.attachedConversationScope,
+        signal: turn.signal,
+      });
+      const mcpServerUrl = deps.getMcpServerUrl?.() || "";
+      const mcpBearerToken = deps.getMcpBearerToken?.() || "";
+      if (scopedMcp.token && mcpServerUrl && mcpBearerToken) {
+        workspace = await deps.prepareWorkspace({
+          conversationKey: turn.conversationKey,
+          scopeToken: scopedMcp.token,
+          mcpServerUrl,
+          mcpBearerToken,
+        });
+      }
+    } catch {
+      // MCP setup failure should not prevent turn from attempting basic run
+    }
+  }
+
   const { permissionMode, effort } = settings;
   const accumulator = new AgyTextAccumulator();
   panel.onStatus("Antigravity is thinking");
+
+  const addDirs: string[] = [];
+  if (contextFile) addDirs.push(contextFile.dir);
+  if (workspace && settings.cwd && settings.cwd !== workspace.dir) {
+    addDirs.push(settings.cwd);
+  }
+
   const result = await deps
     .runTurn({
       binaryPath: settings.binaryPath,
       prompt,
-      ...(contextFile ? { addDirs: [contextFile.dir] } : {}),
+      ...(addDirs.length ? { addDirs } : {}),
       model: toAntigravityModelPref(turn.model ?? settings.model) || undefined,
       effort: effort === "auto" ? undefined : effort,
       mode: permissionMode === "plan" ? "plan" : undefined,
       skipPermissions: permissionMode === "full",
+      settingsPath: workspace?.settingsPath,
       conversationId: storedConversationId || undefined,
-      cwd: settings.cwd,
+      cwd: workspace?.dir ?? settings.cwd,
       signal: turn.signal,
       onEvent: (event) => {
+        if (event.kind === "init" && event.conversationId) {
+          void deps.rememberConversationId(
+            turn.conversationKey,
+            event.conversationId,
+          );
+        }
         if (!panel.isLive()) return;
         if (event.kind === "text") {
           const delta = accumulator.push(
@@ -286,9 +422,19 @@ export async function runAntigravityPanelTurn(
         }
       },
     })
-    .finally(() =>
-      contextFile ? deps.removeContextFile(contextFile) : undefined,
-    );
+    .finally(async () => {
+      try {
+        scopedMcp?.clear();
+      } catch {
+        /* ignore */
+      }
+      if (workspace && deps.removeWorkspace) {
+        await deps.removeWorkspace(workspace);
+      }
+      if (contextFile) {
+        await deps.removeContextFile(contextFile);
+      }
+    });
 
   sentSystemContextByConversation.set(turn.conversationKey, contextFingerprint);
   const conversationId = result.conversationId || storedConversationId;

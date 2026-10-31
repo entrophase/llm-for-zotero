@@ -181,3 +181,81 @@ export function parseScutilProxy(raw: string): Record<string, string> {
   }
   return env;
 }
+
+/**
+ * The proxy Windows is set to use, from registry output:
+ * `reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings"`
+ */
+export function parseWindowsProxyRegistry(raw: string): Record<string, string> {
+  const fields = new Map<string, string>();
+  for (const line of raw.split(/\r?\n/)) {
+    const match = line.match(/^\s*([A-Za-z0-9_]+)\s+REG_[A-Z0-9_]+\s+(.*)$/);
+    if (match) fields.set(match[1]!, match[2]!.trim());
+  }
+
+  const proxyEnable = fields.get("ProxyEnable");
+  if (proxyEnable !== "0x1" && proxyEnable !== "1") {
+    return {};
+  }
+
+  const proxyServer = fields.get("ProxyServer");
+  if (!proxyServer) return {};
+
+  let http = "";
+  let https = "";
+  let socks = "";
+
+  if (proxyServer.includes("=")) {
+    for (const part of proxyServer.split(";")) {
+      const eqIdx = part.indexOf("=");
+      if (eqIdx === -1) continue;
+      const proto = part.slice(0, eqIdx).trim().toLowerCase();
+      const addr = part.slice(eqIdx + 1).trim();
+      if (!addr) continue;
+      if (proto === "http") http = addr;
+      else if (proto === "https") https = addr;
+      else if (proto === "socks") socks = addr;
+    }
+  } else {
+    http = proxyServer;
+    https = proxyServer;
+  }
+
+  const normalizeUrl = (addr: string, defaultScheme: string) => {
+    if (!addr) return "";
+    if (/^[a-z0-9]+:\/\//i.test(addr)) return addr;
+    return `${defaultScheme}://${addr}`;
+  };
+
+  const httpsProxy = normalizeUrl(https || http, "http");
+  const httpProxy = normalizeUrl(http || https, "http");
+  const socksProxy = normalizeUrl(socks, "socks5");
+
+  if (!httpsProxy && !socksProxy) return {};
+
+  const proxyOverride = fields.get("ProxyOverride") || "";
+  const overrides = proxyOverride
+    .split(";")
+    .map((s) => s.trim())
+    .filter((s) => s && s !== "<local>");
+
+  const noProxyParts = [LOOPBACK_NO_PROXY, ...overrides];
+  const seenNoProxy = new Set<string>();
+  const noProxy = noProxyParts
+    .flatMap((part) => part.split(","))
+    .map((s) => s.trim())
+    .filter((s) => s && !seenNoProxy.has(s) && seenNoProxy.add(s))
+    .join(",");
+
+  const env = buildProxyVariables(httpsProxy || socksProxy, {
+    httpProxy: httpProxy || socksProxy,
+    allProxy: socksProxy || httpsProxy,
+  });
+  env.NO_PROXY = noProxy;
+  env.no_proxy = noProxy;
+  if (!socksProxy) {
+    delete env.ALL_PROXY;
+    delete env.all_proxy;
+  }
+  return env;
+}

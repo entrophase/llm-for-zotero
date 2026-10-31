@@ -62,7 +62,19 @@ describe("Antigravity agy turn process", function () {
       }),
     ]);
     CodexAppServerProcess.loadSubprocessModule = async () => ({
-      call: async () => child.proc,
+      call: async (opts: any) => {
+        if (
+          opts?.command === "reg.exe" ||
+          opts?.command === "/usr/sbin/scutil"
+        ) {
+          return {
+            stdout: { readString: async () => "" },
+            stderr: { readString: async () => "" },
+            wait: async () => ({ exitCode: 0 }),
+          };
+        }
+        return child.proc;
+      },
     });
     const result = await runAgyTurn({
       binaryPath: "/opt/agy",
@@ -79,5 +91,79 @@ describe("Antigravity agy turn process", function () {
     const args = buildAgyArguments({ addDirs: ["/tmp/ctx", " "] });
     assert.deepEqual(args.slice(-2), ["--add-dir", "/tmp/ctx"]);
     assert.equal(args.filter((arg) => arg === "--add-dir").length, 1);
+  });
+
+  it("flushes trailing result without newline on stream EOF", async function () {
+    let drained = false;
+    const proc = {
+      stdin: { write: async () => undefined, close: async () => undefined },
+      stdout: {
+        readString: async () => {
+          if (!drained) {
+            drained = true;
+            return JSON.stringify({
+              event: "result",
+              result: {
+                conversation_id: "c2",
+                status: "SUCCESS",
+                response: "Done without newline",
+              },
+            }); // Note: no trailing \n
+          }
+          return "";
+        },
+      },
+      stderr: { readString: async () => "" },
+      wait: async () => ({ exitCode: 0 }),
+      kill: () => undefined,
+    };
+    CodexAppServerProcess.loadSubprocessModule = async () => ({
+      call: async () => proc,
+    });
+    const result = await runAgyTurn({
+      binaryPath: "/opt/agy",
+      prompt: "Hello",
+      onEvent: () => undefined,
+    });
+    assert.equal(result.response, "Done without newline");
+  });
+
+  it("throws when result status is ERROR even if partial response text is present", async function () {
+    const child = lingeringAgy([
+      JSON.stringify({
+        event: "result",
+        result: {
+          conversation_id: "c3",
+          status: "ERROR",
+          response: "Partial text before error",
+          error: "Model rate limit exceeded",
+        },
+      }),
+    ]);
+    CodexAppServerProcess.loadSubprocessModule = async () => ({
+      call: async (opts: any) => {
+        if (
+          opts?.command === "reg.exe" ||
+          opts?.command === "/usr/sbin/scutil"
+        ) {
+          return {
+            stdout: { readString: async () => "" },
+            stderr: { readString: async () => "" },
+            wait: async () => ({ exitCode: 0 }),
+          };
+        }
+        return child.proc;
+      },
+    });
+    try {
+      await runAgyTurn({
+        binaryPath: "/opt/agy",
+        prompt: "Hello",
+        onEvent: () => undefined,
+      });
+      assert.fail("Should have thrown");
+    } catch (error: any) {
+      assert.include(error.message, "Model rate limit exceeded");
+    }
   });
 });

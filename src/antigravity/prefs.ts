@@ -5,6 +5,7 @@ import {
   getAntigravityGlobalConversationKeyRange,
   getAntigravityPaperConversationKeyRange,
   getAntigravityProfileSignature,
+  ANTIGRAVITY_EFFORT_OPTIONS,
   type AntigravityEffortMode,
 } from "./constants";
 import { buildAntigravityLibraryStateKey } from "./state";
@@ -113,7 +114,9 @@ export function setAntigravityRuntimeModelPref(model: string): void {
 
 export function getAntigravityEffortPref(): AntigravityEffortMode {
   const raw = getStringPref("antigravityEffort").trim().toLowerCase();
-  return raw === "low" || raw === "medium" || raw === "high" ? raw : "auto";
+  return (ANTIGRAVITY_EFFORT_OPTIONS as readonly string[]).includes(raw)
+    ? (raw as AntigravityEffortMode)
+    : "auto";
 }
 
 export function setAntigravityEffortPref(mode: AntigravityEffortMode): void {

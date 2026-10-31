@@ -7267,6 +7267,9 @@ export async function retryLatestAssistantResponse(
             attachedPastChatText: codexPastChatText || undefined,
             reasoning: effectiveRequestConfig.reasoning,
             signal: getAbortController(conversationKey)?.signal,
+            libraryID: item?.libraryID,
+            paperItemID: item?.id,
+            activeItemId: item?.id,
             // A retry replaces an answer agy already holds; start over from
             // the transcript the panel shows.
             freshConversation: true,
@@ -10210,6 +10213,9 @@ export async function sendQuestion(
             attachedPastChatText: codexPastChatText || undefined,
             reasoning: effectiveRequestConfig.reasoning,
             signal: getAbortController(conversationKey)?.signal,
+            libraryID: item?.libraryID,
+            paperItemID: item?.id,
+            activeItemId: item?.id,
           },
           {
             isLive: () => !assistantTurn.wasCancelled(),

@@ -2,7 +2,11 @@ import { CodexAppServerProcess } from "../utils/codexAppServerProcess";
 import { pathExists } from "../utils/geckoFs";
 import { getRuntimePlatformInfo } from "../utils/runtimePlatform";
 import { appLogger } from "../core/logging";
-import { getCliProxyOverride, parseScutilProxy } from "../utils/cliProxy";
+import {
+  getCliProxyOverride,
+  parseScutilProxy,
+  parseWindowsProxyRegistry,
+} from "../utils/cliProxy";
 import {
   describeAgyFailure,
   encodeAgyUserEvent,
@@ -30,6 +34,7 @@ export type AgyTurnOptions = {
   effort?: "low" | "medium" | "high" | "xhigh" | "max";
   mode?: "plan";
   skipPermissions?: boolean;
+  settingsPath?: string;
   conversationId?: string;
   /** Folders agy may read besides its workspace (`--add-dir`). */
   addDirs?: string[];
@@ -49,14 +54,33 @@ const AGY_ENV_KEYS = [
 ];
 
 function getRuntimeEnvValue(key: string): string | undefined {
-  const processValue = (globalThis as any).process?.env?.[key];
-  if (typeof processValue === "string" && processValue.trim()) {
-    return processValue.trim();
+  const env = (globalThis as any).process?.env;
+  if (env) {
+    if (typeof env[key] === "string" && env[key].trim()) {
+      return env[key].trim();
+    }
+    const matchedKey = Object.keys(env).find(
+      (k) => k.toLowerCase() === key.toLowerCase(),
+    );
+    if (
+      matchedKey &&
+      typeof env[matchedKey] === "string" &&
+      env[matchedKey].trim()
+    ) {
+      return env[matchedKey].trim();
+    }
   }
   try {
-    const servicesValue = (globalThis as any).Services?.env?.get?.(key);
+    const services = (globalThis as any).Services?.env;
+    const servicesValue = services?.get?.(key);
     if (typeof servicesValue === "string" && servicesValue.trim()) {
       return servicesValue.trim();
+    }
+    if (key === "PATH") {
+      const pathVal = services?.get?.("Path");
+      if (typeof pathVal === "string" && pathVal.trim()) {
+        return pathVal.trim();
+      }
     }
   } catch {
     /* ignore */
@@ -97,6 +121,12 @@ export function listAgyBinaryCandidates(params: {
     return [
       home ? joinPath("\\", home, ".local", "bin", "agy.exe") : "",
       home ? joinPath("\\", home, ".antigravity", "bin", "agy.exe") : "",
+      params.localAppData
+        ? joinPath("\\", params.localAppData, "agy", "bin", "agy.exe")
+        : "",
+      params.localAppData
+        ? joinPath("\\", params.localAppData, "Programs", "agy", "bin", "agy.exe")
+        : "",
       params.localAppData
         ? joinPath("\\", params.localAppData, "Programs", "agy", "agy.exe")
         : "",
@@ -178,6 +208,7 @@ export function buildAgyArguments(
     | "effort"
     | "mode"
     | "skipPermissions"
+    | "settingsPath"
     | "conversationId"
     | "addDirs"
   >,
@@ -197,6 +228,9 @@ export function buildAgyArguments(
   if (options.effort) args.push("--effort", options.effort);
   if (options.mode) args.push("--mode", options.mode);
   if (options.skipPermissions) args.push("--dangerously-skip-permissions");
+  if (options.settingsPath?.trim()) {
+    args.push("--settings", options.settingsPath.trim());
+  }
   if (options.conversationId?.trim()) {
     args.push("--conversation", options.conversationId.trim());
   }
@@ -240,6 +274,7 @@ const PROXY_ENV_KEYS = [
 ];
 
 let systemProxyCache: { at: number; env: Record<string, string> } | null = null;
+let windowsProxyCache: { at: number; env: Record<string, string> } | null = null;
 
 async function readMacSystemProxy(): Promise<Record<string, string>> {
   if (systemProxyCache && Date.now() - systemProxyCache.at < 30_000) {
@@ -267,11 +302,40 @@ async function readMacSystemProxy(): Promise<Record<string, string>> {
   return env;
 }
 
+async function readWindowsSystemProxy(): Promise<Record<string, string>> {
+  if (windowsProxyCache && Date.now() - windowsProxyCache.at < 30_000) {
+    return windowsProxyCache.env;
+  }
+  let env: Record<string, string> = {};
+  try {
+    const Subprocess = await CodexAppServerProcess.loadSubprocessModule();
+    const proc = await Subprocess.call({
+      command: "reg.exe",
+      arguments: [
+        "query",
+        "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings",
+      ],
+    });
+    let out = "";
+    while (true) {
+      const chunk = await proc.stdout?.readString?.();
+      if (!chunk) break;
+      out += chunk;
+    }
+    await proc.wait?.();
+    env = parseWindowsProxyRegistry(out);
+  } catch (error) {
+    appLogger.warn("Antigravity: could not read the Windows proxy", error);
+  }
+  windowsProxyCache = { at: Date.now(), env };
+  return env;
+}
+
 /**
  * PATH plus the proxy from Settings. In "system" mode agy, a Go binary that
- * reads only the *_PROXY variables and never the macOS system proxy, is given
- * that system proxy when Zotero itself (opened from the Dock) has none: with
- * Clash in system-proxy mode it could not reach Google otherwise.
+ * reads only the *_PROXY variables and never the macOS/Windows system proxy,
+ * is given that system proxy when Zotero itself has none: with Clash in
+ * system-proxy mode it could not reach Google otherwise.
  */
 async function buildAgyLaunchEnvironment(
   binary: string,
@@ -280,8 +344,13 @@ async function buildAgyLaunchEnvironment(
   const override = getCliProxyOverride();
   if (override) return Object.assign(env, override);
   const hasProxy = PROXY_ENV_KEYS.some((key) => getRuntimeEnvValue(key));
-  if (!hasProxy && getRuntimePlatformInfo().platform === "macos") {
-    Object.assign(env, await readMacSystemProxy());
+  if (!hasProxy) {
+    const platform = getRuntimePlatformInfo().platform;
+    if (platform === "macos") {
+      Object.assign(env, await readMacSystemProxy());
+    } else if (platform === "windows") {
+      Object.assign(env, await readWindowsSystemProxy());
+    }
   }
   return env;
 }
@@ -438,6 +507,16 @@ export async function runAgyTurn(
         }
       }
     }
+    if (!result && buffer.trim()) {
+      const event = parseAgyStreamLine(buffer.trim());
+      if (event) {
+        firstEventSeen = true;
+        options.onEvent(event);
+        if (event.kind === "result") {
+          result = event;
+        }
+      }
+    }
     await closeStdin();
     // agy 1.4.2 keeps running once the result is out, even at end of input,
     // and ignores SIGTERM, so the turn ends it. When stdout closed without a
@@ -454,7 +533,13 @@ export async function runAgyTurn(
     await settleWithin(stderrLoop, AGY_EXIT_WAIT_MS);
     if (options.signal?.aborted) throw createAbortError();
     if (result) {
-      if (/^(SUCCESS|OK|COMPLETED?)$/i.test(result.status) || result.response) {
+      const isExplicitError =
+        /^(ERROR|FAILED|CANCELLED|CANCELED)$/i.test(result.status) ||
+        Boolean(result.error);
+      if (
+        !isExplicitError &&
+        (/^(SUCCESS|OK|COMPLETED?)$/i.test(result.status) || result.response)
+      ) {
         return result;
       }
       const message =

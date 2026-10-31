@@ -342,4 +342,86 @@ describe("Antigravity panel turn", function () {
       "Antigravity: Reading paper.md",
     ]);
   });
+
+  it("sets up MCP scope with runtimeAuthority antigravity and cleans up workspace", async function () {
+    let cleared = false;
+    let registeredScope: any = null;
+    let workspacePrepared = false;
+    let workspaceCleaned = false;
+
+    const h = harness({
+      result: { response: "MCP result" },
+    });
+    h.deps.registerMcpScope = (scope: any) => {
+      registeredScope = scope;
+      return {
+        token: "mcp-token-xyz",
+        clear: () => {
+          cleared = true;
+        },
+        getState: () => scope,
+      };
+    };
+    h.deps.getMcpServerUrl = () => "http://127.0.0.1:23119/llm-for-zotero/mcp";
+    h.deps.getMcpBearerToken = () => "mock-bearer-token-123";
+    h.deps.prepareWorkspace = async () => {
+      workspacePrepared = true;
+      return {
+        dir: "/tmp/session-dir",
+        settingsPath: "/tmp/session-dir/settings.json",
+      };
+    };
+    h.deps.removeWorkspace = async () => {
+      workspaceCleaned = true;
+    };
+
+    const p = panel();
+    await runAntigravityPanelTurn(
+      {
+        conversationKey: 41,
+        messages,
+        libraryID: 10,
+        paperItemID: 20,
+      },
+      p.callbacks,
+      h.deps,
+    );
+
+    assert.isNotNull(registeredScope);
+    assert.equal(registeredScope.runtimeAuthority, "antigravity");
+    assert.equal(registeredScope.libraryID, 10);
+    assert.equal(registeredScope.paperItemID, 20);
+    assert.isTrue(workspacePrepared);
+    assert.equal(h.calls[0].cwd, "/tmp/session-dir");
+    assert.equal(h.calls[0].settingsPath, "/tmp/session-dir/settings.json");
+    assert.isTrue(cleared);
+    assert.isTrue(workspaceCleaned);
+  });
+
+  it("remembers conversation ID immediately upon receiving init event", async function () {
+    const rememberedIds: string[] = [];
+    let rememberedDuringStream = false;
+
+    const h = harness({
+      events: [
+        { kind: "init", conversationId: "c-early-id" },
+        { kind: "text", stepIndex: 1, state: "ACTIVE", delta: "Processing" },
+      ],
+      result: { conversationId: "c-early-id", response: "Done" },
+    });
+    h.deps.rememberConversationId = async (_key, id) => {
+      rememberedIds.push(id);
+      rememberedDuringStream = true;
+    };
+
+    const p = panel();
+    await runAntigravityPanelTurn(
+      { conversationKey: 41, messages },
+      p.callbacks,
+      h.deps,
+    );
+
+    assert.isTrue(rememberedDuringStream);
+    assert.include(rememberedIds, "c-early-id");
+  });
 });

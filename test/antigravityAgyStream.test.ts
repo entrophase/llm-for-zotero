@@ -24,6 +24,10 @@ import {
   selectAntigravityRuntimeEntry,
   toAntigravityModelPref,
 } from "../src/antigravity/modelCatalog";
+import {
+  getAntigravityEffortPref,
+  setAntigravityEffortPref,
+} from "../src/antigravity/prefs";
 import type { ChatMessage } from "../src/shared/llm";
 
 describe("Antigravity agy headless protocol", function () {
@@ -314,12 +318,13 @@ describe("Antigravity agy process helpers", function () {
       listAgyBinaryCandidates({ platform: "macos", home: "/Users/max" }),
       "/opt/homebrew/bin/agy",
     );
-    assert.isTrue(
-      listAgyBinaryCandidates({
-        platform: "windows",
-        home: "C:\\Users\\max",
-      }).every((path) => path.endsWith("agy.exe")),
-    );
+    const win = listAgyBinaryCandidates({
+      platform: "windows",
+      home: "C:\\Users\\max",
+      localAppData: "C:\\Users\\max\\AppData\\Local",
+    });
+    assert.include(win, "C:\\Users\\max\\AppData\\Local\\agy\\bin\\agy.exe");
+    assert.isTrue(win.every((path) => path.endsWith("agy.exe")));
   });
 
   it("parses agy models output in its JSON shapes", function () {
@@ -437,5 +442,27 @@ describe("Antigravity model menu", function () {
     assert.equal(snapshot.status, "error");
     assert.equal(snapshot.error, "agy not found");
     assert.deepEqual(snapshot.models, [{ id: "m1", label: "M1" }]);
+  });
+
+  it("preserves xhigh and max reasoning effort preferences", function () {
+    const memory = new Map<string, unknown>();
+    (globalThis as any).Zotero = {
+      Prefs: {
+        get: (k: string) => memory.get(k),
+        set: (k: string, v: unknown) => memory.set(k, v),
+      },
+    };
+
+    setAntigravityEffortPref("xhigh");
+    assert.equal(getAntigravityEffortPref(), "xhigh");
+
+    setAntigravityEffortPref("max");
+    assert.equal(getAntigravityEffortPref(), "max");
+
+    setAntigravityEffortPref("high");
+    assert.equal(getAntigravityEffortPref(), "high");
+
+    setAntigravityEffortPref("auto");
+    assert.equal(getAntigravityEffortPref(), "auto");
   });
 });
