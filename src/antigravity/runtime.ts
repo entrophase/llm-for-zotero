@@ -1,4 +1,9 @@
-import type { ChatMessage, ModelTurnOutcome, UsageStats } from "../shared/llm";
+import type {
+  ChatMessage,
+  ModelTurnOutcome,
+  UsageStats,
+  ReasoningConfig,
+} from "../shared/llm";
 import { getUserSkillsRuntimeRootDir } from "../agent/skills/userSkills";
 import { withConversationWriteLock } from "../shared/conversationWriteFence";
 import {
@@ -47,6 +52,8 @@ export type AntigravityPanelTurn = {
   conversationKey: number;
   messages: ChatMessage[];
   model?: string;
+  reasoning?: ReasoningConfig | string;
+  attachedPastChatText?: string;
   signal?: AbortSignal;
   /**
    * Start a new agy conversation instead of resuming the stored one. A retry

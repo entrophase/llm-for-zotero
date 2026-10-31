@@ -519,24 +519,6 @@ export function createHistoryLifecycleController(
   const getConversationSystem = deps.getConversationSystem;
   const isClaudeConversationSystem = deps.isClaudeConversationSystem;
   const isCodexConversationSystem = deps.isCodexConversationSystem;
-  // Antigravity keeps its history the way Codex does (its own store, both
-  // scopes, no library lock), so these follow whichever of the two is shown.
-  const isCodexLikeConversationSystem = () =>
-    isCodexConversationSystem() || getConversationSystem() === "antigravity";
-  const codexLikeSystem = (): "codex" | "antigravity" =>
-    getConversationSystem() === "antigravity" ? "antigravity" : "codex";
-  const loadCodexLikeHistoryScope = (
-    params: Parameters<typeof loadCodexConversationHistoryScope>[0],
-  ) =>
-    codexLikeSystem() === "antigravity"
-      ? loadAntigravityConversationHistoryScope(params)
-      : loadCodexConversationHistoryScope(params);
-  const loadAllCodexLikeHistory = (
-    params: Parameters<typeof loadAllCodexConversationHistory>[0],
-  ) =>
-    codexLikeSystem() === "antigravity"
-      ? loadAllAntigravityConversationHistory(params)
-      : loadAllCodexConversationHistory(params);
   const isRuntimeConversationSystem = deps.isRuntimeConversationSystem;
   const isNoteSession = deps.isNoteSession;
   const isGlobalMode = deps.isGlobalMode;
@@ -4206,42 +4188,40 @@ export function createHistoryLifecycleController(
   // A tab click navigates exactly like picking a conversation in the history
   // menu: prime the target mode, switch, and roll the priming back on failure.
   // The library lock is the sidebar's; the standalone window has none.
-  const resolveRememberedGlobalConversationKey = (libraryID: number): number =>
-    isClaudeConversationSystem()
-      ? recall({
-          system: "claude_code",
-          libraryID,
-          kind: "global",
-          surface: selectionSurface(),
-        })
-      : isCodexLikeConversationSystem()
-        ? recall({
-            system: codexLikeSystem(),
-            libraryID,
-            kind: "global",
-            surface: selectionSurface(),
-          })
-        : (() => {
-            // The library lock is the sidebar's; the window and its side
-            // chat have none.
-            const lockedKey =
-              selectionSurface() !== "embedded"
-                ? null
-                : getLockedGlobalConversationKey(libraryID);
-            if (lockedKey !== null) return lockedKey;
-            const activeKey = Number(
-              recall({
-                system: "upstream",
-                libraryID,
-                kind: "global",
-                surface: selectionSurface(),
-              }),
-            );
-            if (!isUpstreamGlobalConversationKey(activeKey)) return 0;
-            return activeKey === GLOBAL_CONVERSATION_KEY_BASE
-              ? buildDefaultUpstreamGlobalConversationKey(libraryID)
-              : Math.floor(activeKey);
-          })();
+  const resolveRememberedGlobalConversationKey = (libraryID: number): number => {
+    const system = getConversationSystem();
+    if (
+      system === "claude_code" ||
+      system === "codex" ||
+      system === "antigravity"
+    ) {
+      return recall({
+        system,
+        libraryID,
+        kind: "global",
+        surface: selectionSurface(),
+      });
+    }
+    // The library lock is the sidebar's; the window and its side
+    // chat have none.
+    const lockedKey =
+      selectionSurface() !== "embedded"
+        ? null
+        : getLockedGlobalConversationKey(libraryID);
+    if (lockedKey !== null) return lockedKey;
+    const activeKey = Number(
+      recall({
+        system: "upstream",
+        libraryID,
+        kind: "global",
+        surface: selectionSurface(),
+      }),
+    );
+    if (!isUpstreamGlobalConversationKey(activeKey)) return 0;
+    return activeKey === GLOBAL_CONVERSATION_KEY_BASE
+      ? buildDefaultUpstreamGlobalConversationKey(libraryID)
+      : Math.floor(activeKey);
+  };
 
   const switchSidebarChatMode = async (
     requested: SidebarChatModeTab,

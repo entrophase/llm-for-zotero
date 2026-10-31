@@ -3057,7 +3057,7 @@ function openChatWindowInstance(
                   getCurrentLibraryScopeID(),
                   params.conversationKey,
                 ) as Zotero.Item)
-              : isAntigravityConversationSystem()
+              : system === "antigravity"
                 ? (createAntigravityGlobalPortalItem(
                     getCurrentLibraryScopeID(),
                     params.conversationKey,
@@ -3078,7 +3078,7 @@ function openChatWindowInstance(
                 params.paperItem,
                 params.conversationKey,
               ) as Zotero.Item)
-            : isAntigravityConversationSystem()
+            : system === "antigravity"
               ? (createAntigravityPaperPortalItem(
                   params.paperItem,
                   params.conversationKey,
@@ -6277,8 +6277,8 @@ function openChatWindowInstance(
           }
           if (!isAntigravityModeEnabled()) {
             demoteConversationSystemOnEverySurface("antigravity");
-            if (isAntigravityConversationSystem()) {
-              void switchConversationSystem("upstream");
+            if (currentConversationSystem === "antigravity") {
+              leaveTurnedOffRuntime();
               return;
             }
           }
