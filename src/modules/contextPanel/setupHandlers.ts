@@ -657,6 +657,34 @@ import {
   createCodexGlobalPortalItem,
   createCodexPaperPortalItem,
 } from "../../codexAppServer/portal";
+import { touchAntigravityConversationTitle } from "../../antigravity/store";
+import {
+  buildAntigravityRuntimeModelEntries,
+  getAntigravityModelCatalogSnapshot,
+  loadAntigravityModelCatalog,
+  selectAntigravityRuntimeEntry,
+  toAntigravityModelPref,
+} from "../../antigravity/modelCatalog";
+import {
+  ANTIGRAVITY_EFFORT_OPTIONS,
+  type AntigravityEffortMode,
+} from "../../antigravity/constants";
+import {
+  createAntigravityGlobalPortalItem,
+  createAntigravityPaperPortalItem,
+} from "../../antigravity/portal";
+import {
+  getAntigravityBinaryPathPref,
+  getAntigravityEffortPref,
+  getAntigravityRuntimeModelPref,
+  setAntigravityEffortPref,
+  setAntigravityRuntimeModelPref,
+  getLastUsedAntigravityConversationMode,
+  getLastUsedAntigravityPaperConversationKey,
+  isAntigravityModeEnabled,
+  removeLastUsedAntigravityGlobalConversationKey,
+  removeLastUsedAntigravityPaperConversationKey,
+} from "../../antigravity/prefs";
 import type { CodexReasoningChoice } from "../../codex/catalogSelection";
 import {
   createCodexDirectModelReasoningController,
@@ -748,9 +776,11 @@ export function setupHandlers(
       ? "claude_code"
       : existingPanelRoot?.dataset?.conversationSystem === "codex"
         ? "codex"
-        : existingPanelRoot?.dataset?.conversationSystem === "upstream"
-          ? "upstream"
-          : resolveConversationSystemForItem(initialItem);
+        : existingPanelRoot?.dataset?.conversationSystem === "antigravity"
+          ? "antigravity"
+          : existingPanelRoot?.dataset?.conversationSystem === "upstream"
+            ? "upstream"
+            : resolveConversationSystemForItem(initialItem);
   const preferredConversationMode =
     existingPanelRoot?.dataset?.conversationKind === "global"
       ? "global"
@@ -859,6 +889,7 @@ export function setupHandlers(
     runtimeSystemControls,
     codexSystemToggleBtn,
     claudeSystemToggleBtn,
+    antigravitySystemToggleBtn,
     selectTextBtn,
     screenshotBtn,
     uploadBtn,
@@ -1089,10 +1120,12 @@ export function setupHandlers(
       ? "claude_code"
       : panelRoot.dataset.conversationSystem === "codex"
         ? "codex"
-        : resolvePreferredConversationSystem({
-            item,
-            surface: selectionSurface(),
-          });
+        : panelRoot.dataset.conversationSystem === "antigravity"
+          ? "antigravity"
+          : resolvePreferredConversationSystem({
+              item,
+              surface: selectionSurface(),
+            });
   let currentConversationSystem: ConversationSystem =
     resolvePreferredConversationSystem({
       item,
@@ -1104,8 +1137,12 @@ export function setupHandlers(
   const isClaudeConversationSystem = () =>
     getConversationSystem() === "claude_code";
   const isCodexConversationSystem = () => getConversationSystem() === "codex";
+  const isAntigravityConversationSystem = () =>
+    getConversationSystem() === "antigravity";
   const isRuntimeConversationSystem = () =>
-    isClaudeConversationSystem() || isCodexConversationSystem();
+    isClaudeConversationSystem() ||
+    isCodexConversationSystem() ||
+    isAntigravityConversationSystem();
   const shouldRenderDynamicSlashMenuForCurrentConversation = () =>
     shouldRenderDynamicSlashMenu({
       itemPresent: Boolean(item),
@@ -1123,11 +1160,13 @@ export function setupHandlers(
   panelRoot.dataset.conversationSystem = currentConversationSystem;
   syncQueuedFollowUpRegistration();
   // A side chat is never saved, so it cannot use a runtime that keeps
-  // provider-side state (Claude Code, Codex): their switches stay hidden.
+  // provider-side state (Claude Code, Codex, Antigravity): their switches stay hidden.
   const isClaudeModeAvailable = () =>
     !isSidePanel && getClaudeCodeModeEnabled();
   const isCodexModeAvailable = () =>
     !isSidePanel && isCodexAppServerModeEnabled();
+  const isAntigravityModeAvailable = () =>
+    !isSidePanel && isAntigravityModeEnabled();
   let claudeModelCatalogStatus: "idle" | "loading" | "ready" | "error" = "idle";
   let claudeModelCatalogError = "";
   let claudeModelCatalogModels: ClaudeModelCatalogEntry[] = [];
@@ -1378,6 +1417,34 @@ export function setupHandlers(
       entries[0]!
     );
   };
+  const getAntigravityRuntimeModelEntries = (): RuntimeModelEntry[] =>
+    buildAntigravityRuntimeModelEntries({
+      models: getAntigravityModelCatalogSnapshot().models,
+      selectedModel: getAntigravityRuntimeModelPref(),
+    });
+  const getSelectedAntigravityRuntimeEntry = (): RuntimeModelEntry =>
+    selectAntigravityRuntimeEntry(
+      getAntigravityRuntimeModelEntries(),
+      getAntigravityRuntimeModelPref(),
+    );
+  const getAntigravityEffortChoices = (): CodexReasoningChoice[] =>
+    ANTIGRAVITY_EFFORT_OPTIONS.map((value) => ({
+      value,
+      label:
+        value === "auto"
+          ? "Auto"
+          : value === "xhigh"
+            ? "XHigh"
+            : value[0]!.toUpperCase() + value.slice(1),
+    }));
+  const ensureAntigravityModelCatalogLoaded = (force = false) => {
+    if (!isAntigravityConversationSystem()) return;
+    void loadAntigravityModelCatalog(getAntigravityBinaryPathPref(), {
+      force,
+    }).then(() => {
+      if (!setupHandlersCleaned) refreshOpenCodexModelMenu();
+    });
+  };
   const getCurrentLibraryID = (): number => {
     const fromItem =
       item && Number.isFinite(item.libraryID) && item.libraryID > 0
@@ -1420,6 +1487,7 @@ export function setupHandlers(
       agentEnabled: getAgentModeEnabled(),
       codexEnabled: isCodexModeAvailable(),
       claudeEnabled: isClaudeModeAvailable(),
+      antigravityEnabled: isAntigravityModeAvailable(),
       isWebChat: webChatActive,
       isSideChat: isSidePanel,
       isTornWindow: isTornSurface(selectionSurface()),
@@ -1480,6 +1548,7 @@ export function setupHandlers(
     buttons: {
       codex: codexSystemToggleBtn,
       claude_code: claudeSystemToggleBtn,
+      antigravity: antigravitySystemToggleBtn,
     },
   };
   let runtimeSystemSwitchInFlight = false;
@@ -1491,6 +1560,7 @@ export function setupHandlers(
       activeSystem: getConversationSystem(),
       codexEnabled: isCodexModeAvailable(),
       claudeEnabled: isClaudeModeAvailable(),
+      antigravityEnabled: isAntigravityModeAvailable(),
       busy: runtimeSystemSwitchInFlight,
     });
     // The divider before the runtime systems goes when they do. Their
@@ -1657,6 +1727,9 @@ export function setupHandlers(
       if (resolvedNextSystem === "claude_code") {
         warmClaudeModeCaches();
       }
+      if (resolvedNextSystem === "antigravity") {
+        ensureAntigravityModelCatalogLoaded();
+      }
       updateRuntimeModeButton();
       updateRuntimeSystemToggles();
       if (options?.forceFresh === true) {
@@ -1690,6 +1763,9 @@ export function setupHandlers(
     updateRuntimeSystemToggles();
     if (nextSystem === "claude_code") {
       warmClaudeModeCaches();
+    }
+    if (nextSystem === "antigravity") {
+      ensureAntigravityModelCatalogLoaded();
     }
     const target = options?.target;
     if (target) {
@@ -1784,8 +1860,8 @@ export function setupHandlers(
               kind: "global",
               surface,
             })
-          : nextSystem === "codex"
-            ? recall({ system: "codex", libraryID, kind: "global", surface })
+          : nextSystem === "codex" || nextSystem === "antigravity"
+            ? recall({ system: nextSystem, libraryID, kind: "global", surface })
             : (() => {
                 // The library lock is the sidebar's; the window has none.
                 const lockedKey =
@@ -2075,11 +2151,17 @@ export function setupHandlers(
       const surface = selectionSurface();
       if (isClaudeConversationSystem()) {
         rememberMode("claude_code", libraryID, mode, { surface });
-      } else if (isCodexConversationSystem()) {
-        rememberMode("codex", libraryID, mode, { surface });
+      } else if (
+        isCodexConversationSystem() ||
+        isAntigravityConversationSystem()
+      ) {
+        const runtimeSystem = isCodexConversationSystem()
+          ? "codex"
+          : "antigravity";
+        rememberMode(runtimeSystem, libraryID, mode, { surface });
         if (mode === "global") {
           remember(
-            { system: "codex", libraryID, kind: "global", surface },
+            { system: runtimeSystem, libraryID, kind: "global", surface },
             item.id,
           );
         } else if (
@@ -2090,7 +2172,7 @@ export function setupHandlers(
         ) {
           remember(
             {
-              system: "codex",
+              system: runtimeSystem,
               libraryID,
               kind: "paper",
               paperItemID: Math.floor(currentBasePaperItemID),
@@ -2182,6 +2264,14 @@ export function setupHandlers(
     const agentPrefKey = `${config.prefsPrefix}.enableAgentMode`;
     const claudeModePrefKey = `${config.prefsPrefix}.enableClaudeCodeMode`;
     const codexModePrefKey = `${config.prefsPrefix}.enableCodexAppServerMode`;
+    const antigravityModePrefKey = `${config.prefsPrefix}.enableAntigravityMode`;
+    // The model menu and effort chip read these; the path also decides
+    // which `agy models` list applies.
+    const antigravityChoicePrefKeys = [
+      `${config.prefsPrefix}.antigravityModel`,
+      `${config.prefsPrefix}.antigravityEffort`,
+      `${config.prefsPrefix}.antigravityPath`,
+    ];
     const permissionPrefObservers: Array<{
       key: string;
       system: ConversationSystem;
@@ -2222,6 +2312,7 @@ export function setupHandlers(
     let agentObserverId: symbol | undefined;
     let claudeObserverId: symbol | undefined;
     let codexObserverId: symbol | undefined;
+    let antigravityObserverId: symbol | undefined;
     const permissionObserverIds: symbol[] = [];
     const unregister = (observerId: symbol | undefined) => {
       if (observerId === undefined) return;
@@ -2235,12 +2326,14 @@ export function setupHandlers(
       unregister(agentObserverId);
       unregister(claudeObserverId);
       unregister(codexObserverId);
+      unregister(antigravityObserverId);
       for (const observerId of permissionObserverIds.splice(0)) {
         unregister(observerId);
       }
       agentObserverId = undefined;
       claudeObserverId = undefined;
       codexObserverId = undefined;
+      antigravityObserverId = undefined;
     };
     const isPanelUnavailable = () =>
       !(body as Element).isConnected ||
@@ -2296,6 +2389,21 @@ export function setupHandlers(
       updateRuntimeSystemToggles();
       updateRuntimeModeButton();
     };
+    const onAntigravityModePrefChange = () => {
+      if (isPanelUnavailable()) {
+        cleanupPrefObservers?.();
+        return;
+      }
+      if (!isAntigravityModeEnabled()) {
+        demoteConversationSystemOnEverySurface("antigravity");
+        if (isAntigravityConversationSystem()) {
+          void switchConversationSystem("upstream");
+          return;
+        }
+      }
+      updateRuntimeSystemToggles();
+      updateRuntimeModeButton();
+    };
     try {
       agentObserverId = (Zotero as any).Prefs.registerObserver(
         agentPrefKey,
@@ -2312,6 +2420,31 @@ export function setupHandlers(
         onCodexModePrefChange,
         true,
       );
+      antigravityObserverId = (Zotero as any).Prefs.registerObserver(
+        antigravityModePrefKey,
+        onAntigravityModePrefChange,
+        true,
+      );
+      for (const key of antigravityChoicePrefKeys) {
+        permissionObserverIds.push(
+          (Zotero as any).Prefs.registerObserver(
+            key,
+            () => {
+              if (isPanelUnavailable()) {
+                cleanupPrefObservers?.();
+                return;
+              }
+              if (!isAntigravityConversationSystem()) return;
+              if (key.endsWith(".antigravityPath")) {
+                ensureAntigravityModelCatalogLoaded(true);
+              }
+              updateModelButton();
+              updateReasoningButton();
+            },
+            true,
+          ),
+        );
+      }
       for (const observer of permissionPrefObservers) {
         permissionObserverIds.push(
           (Zotero as any).Prefs.registerObserver(
@@ -3363,6 +3496,7 @@ export function setupHandlers(
       ),
       isClaudeCode: isClaudeConversationSystem(),
       isCodex: isCodexConversationSystem(),
+      isAntigravity: isAntigravityConversationSystem(),
     });
   };
 
@@ -5606,7 +5740,8 @@ export function setupHandlers(
       runtimeSystemSwitchInFlight ||
       !item ||
       (targetSystem === "codex" && !isCodexModeAvailable()) ||
-      (targetSystem === "claude_code" && !isClaudeModeAvailable())
+      (targetSystem === "claude_code" && !isClaudeModeAvailable()) ||
+      (targetSystem === "antigravity" && !isAntigravityModeAvailable())
     ) {
       return;
     }
@@ -5636,7 +5771,8 @@ export function setupHandlers(
       runtimeSystemSwitchInFlight ||
       !item ||
       (system === "codex" && !isCodexModeAvailable()) ||
-      (system === "claude_code" && !isClaudeModeAvailable())
+      (system === "claude_code" && !isClaudeModeAvailable()) ||
+      (system === "antigravity" && !isAntigravityModeAvailable())
     ) {
       return false;
     }
@@ -5671,10 +5807,12 @@ export function setupHandlers(
       ? getClaudeRuntimeModelEntries()
       : isCodexConversationSystem()
         ? getCodexRuntimeModelEntries()
-        : getAvailableModelEntries().filter(
-            // Neither a side chat nor a torn-off window runs on WebChat.
-            (entry) => offersWebChatModels() || entry.authMode !== "webchat",
-          );
+        : isAntigravityConversationSystem()
+          ? getAntigravityRuntimeModelEntries()
+          : getAvailableModelEntries().filter(
+              // Neither a side chat nor a torn-off window runs on WebChat.
+              (entry) => offersWebChatModels() || entry.authMode !== "webchat",
+            );
     const groupedChoices: Array<{
       providerLabel: string;
       entries: RuntimeModelEntry[];
@@ -5704,9 +5842,11 @@ export function setupHandlers(
       ? getSelectedClaudeRuntimeEntry()
       : isCodexConversationSystem()
         ? getSelectedCodexRuntimeEntry()
-        : item
-          ? panelChoices.getSelectedModelEntry()
-          : null;
+        : isAntigravityConversationSystem()
+          ? getSelectedAntigravityRuntimeEntry()
+          : item
+            ? panelChoices.getSelectedModelEntry()
+            : null;
     const currentModel =
       selectedEntry?.model ||
       choices[0]?.model ||
@@ -5917,6 +6057,37 @@ export function setupHandlers(
     });
   };
 
+  const appendAntigravityModelCatalogStatus = (menu: HTMLDivElement) => {
+    if (!isAntigravityConversationSystem()) return;
+    const snapshot = getAntigravityModelCatalogSnapshot();
+    appendModelCatalogStatus({
+      menu,
+      status: snapshot.status,
+      modelCount: snapshot.models.length,
+      loadingMessage: snapshot.models.length
+        ? t("Refreshing Antigravity models…")
+        : t("Loading Antigravity models…"),
+      errorMessage: snapshot.models.length
+        ? t(
+            "Could not refresh Antigravity models. Showing the last known list.",
+          )
+        : t(
+            "Could not load Antigravity models. agy will use its default model.",
+          ),
+      errorTitle: snapshot.error,
+      emptyMessage: t(
+        "Antigravity did not return any models; agy will use its default.",
+      ),
+      retryLabel: t("Retry loading Antigravity models"),
+      onRetry: (event) => {
+        if (!isPrimaryPointerEvent(event)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        ensureAntigravityModelCatalogLoaded(true);
+      },
+    });
+  };
+
   const appendClaudeModelCatalogStatus = (menu: HTMLDivElement) => {
     if (!isClaudeConversationSystem()) return;
     const statusHandled = appendModelCatalogStatus({
@@ -5979,6 +6150,7 @@ export function setupHandlers(
     modelMenu.innerHTML = "";
     appendClaudeModelCatalogStatus(modelMenu);
     appendCodexModelCatalogStatus(modelMenu);
+    appendAntigravityModelCatalogStatus(modelMenu);
     codexDirectController?.appendCatalogStatus({
       menu: modelMenu,
       renderStatus: appendModelCatalogStatus,
@@ -6028,6 +6200,13 @@ export function setupHandlers(
               REASONING_MENU_OPEN_CLASS,
               false,
             );
+            updateModelButton();
+            updateReasoningButton();
+            return;
+          }
+          if (isAntigravityConversationSystem()) {
+            setAntigravityRuntimeModelPref(toAntigravityModelPref(entry.model));
+            setFloatingMenuOpen(modelMenu, MODEL_MENU_OPEN_CLASS, false);
             updateModelButton();
             updateReasoningButton();
             return;
@@ -6096,6 +6275,7 @@ export function setupHandlers(
             ),
             isClaudeCode: isClaudeConversationSystem(),
             isCodex: isCodexConversationSystem(),
+            isAntigravity: isAntigravityConversationSystem(),
           });
           if (shouldDowngrade) {
             const papers = getManualPaperContextsForItem(
@@ -6435,6 +6615,26 @@ export function setupHandlers(
         selectedLevel,
       };
     }
+    if (isAntigravityConversationSystem()) {
+      const selectedMode = getAntigravityEffortPref();
+      const options: ReasoningOption[] = getAntigravityEffortChoices()
+        .filter((choice) => choice.value !== "auto")
+        .map((choice) => ({
+          level: choice.value as LLMReasoningLevel,
+          enabled: true,
+          label: choice.label,
+        }));
+      return {
+        provider: "openai" as const,
+        currentModel,
+        options,
+        enabledLevels: options.map((option) => option.level),
+        selectedLevel:
+          selectedMode === "auto"
+            ? "none"
+            : (selectedMode as ReasoningLevelSelection),
+      };
+    }
     if (isCodexConversationSystem()) {
       const selectedMode = panelChoices.getCodexReasoningMode();
       const options: ReasoningOption[] = getCodexReasoningChoices()
@@ -6769,29 +6969,33 @@ export function setupHandlers(
             getClaudeReasoningDisplayMode(),
           );
         })()
-      : isCodexConversationSystem()
-        ? (() => {
-            const mode = panelChoices.getCodexReasoningMode();
-            return (
-              getCodexReasoningChoices().find(
-                (choice) => choice.value.toLowerCase() === mode.toLowerCase(),
+      : isAntigravityConversationSystem()
+        ? getAntigravityEffortChoices().find(
+            (choice) => choice.value === getAntigravityEffortPref(),
+          )?.label || "Auto"
+        : isCodexConversationSystem()
+          ? (() => {
+              const mode = panelChoices.getCodexReasoningMode();
+              return (
+                getCodexReasoningChoices().find(
+                  (choice) => choice.value.toLowerCase() === mode.toLowerCase(),
+                )?.label || "Auto"
+              );
+            })()
+          : directSelection.choices.length
+            ? directSelection.choices.find(
+                (choice) =>
+                  choice.value.toLowerCase() ===
+                  directSelection.mode.toLowerCase(),
               )?.label || "Auto"
-            );
-          })()
-        : directSelection.choices.length
-          ? directSelection.choices.find(
-              (choice) =>
-                choice.value.toLowerCase() ===
-                directSelection.mode.toLowerCase(),
-            )?.label || "Auto"
-          : available
-            ? getReasoningLevelDisplayLabel(
-                selectedLevel as LLMReasoningLevel,
-                provider,
-                currentModel,
-                options,
-              )
-            : "Not supported";
+            : available
+              ? getReasoningLevelDisplayLabel(
+                  selectedLevel as LLMReasoningLevel,
+                  provider,
+                  currentModel,
+                  options,
+                )
+              : "Not supported";
     const active = Boolean(available && activeThinking);
     const reasoningLabel = resolvedReasoningLabel;
     const reasoningHint =
@@ -6961,6 +7165,19 @@ export function setupHandlers(
         option.addEventListener("click", applyClaudeSelection);
         reasoningMenu.appendChild(option);
       }
+      return;
+    }
+    if (isAntigravityConversationSystem()) {
+      appendReasoningChoiceButtons({
+        menu: reasoningMenu,
+        choices: getAntigravityEffortChoices(),
+        currentValue: getAntigravityEffortPref(),
+        onSelect: (value) => {
+          setAntigravityEffortPref(value as AntigravityEffortMode);
+          setFloatingMenuOpen(reasoningMenu, REASONING_MENU_OPEN_CLASS, false);
+          updateReasoningButton();
+        },
+      });
       return;
     }
     if (isCodexConversationSystem()) {
@@ -7563,7 +7780,9 @@ export function setupHandlers(
       ? getSelectedClaudeRuntimeEntry()
       : isCodexConversationSystem()
         ? getSelectedCodexRuntimeEntry()
-        : panelChoices.getSelectedModelEntry();
+        : isAntigravityConversationSystem()
+          ? getSelectedAntigravityRuntimeEntry()
+          : panelChoices.getSelectedModelEntry();
     if (!selected) return null;
     return {
       ...selected,
@@ -7583,6 +7802,9 @@ export function setupHandlers(
     if (isCodexConversationSystem()) {
       return getSelectedCodexRuntimeEntry().advanced;
     }
+    if (isAntigravityConversationSystem()) {
+      return getSelectedAntigravityRuntimeEntry().advanced;
+    }
     return getAdvancedModelParamsForEntry(entryId);
   };
 
@@ -7593,6 +7815,8 @@ export function setupHandlers(
         getClaudeReasoningDisplayMode(),
       );
     }
+    // agy takes its effort as a flag the runtime reads from the pref.
+    if (isAntigravityConversationSystem()) return undefined;
     if (isCodexConversationSystem()) {
       const mode =
         codexModelCatalogStatus === "ready"
@@ -8108,6 +8332,7 @@ export function setupHandlers(
         ),
         isClaudeCode: isClaudeConversationSystem(),
         isCodex: isCodexConversationSystem(),
+        isAntigravity: isAntigravityConversationSystem(),
       }),
     uploadPdfForProvider: pdfPaperResolver.uploadPdfForProvider,
     resolvePdfBytes: pdfPaperResolver.resolvePdfBytes,
@@ -8120,11 +8345,13 @@ export function setupHandlers(
     isGlobalMode,
     isClaudeConversationSystem,
     isCodexConversationSystem,
+    isAntigravityConversationSystem,
     normalizeConversationTitleSeed,
     getConversationKey,
     getConversationWriteGeneration,
     touchClaudeConversationTitle,
     touchCodexConversationTitle,
+    touchAntigravityConversationTitle,
     touchGlobalConversationTitle,
     touchPaperConversationTitle,
     getSelectedProfile,
@@ -8362,6 +8589,7 @@ export function setupHandlers(
               ),
               isClaudeCode: isClaudeConversationSystem(),
               isCodex: isCodexConversationSystem(),
+              isAntigravity: isAntigravityConversationSystem(),
             }),
           resolvePdfPaperAttachments:
             pdfPaperResolver.resolvePdfPaperAttachments,
@@ -8956,6 +9184,8 @@ export function setupHandlers(
       // A loaded catalog can change while this chat stays mounted. Revalidate
       // on each user opening and update the menu when model/list returns.
       void ensureCodexModelCatalogLoaded(true);
+    } else if (isAntigravityConversationSystem()) {
+      ensureAntigravityModelCatalogLoaded(true);
     } else if (isClaudeConversationSystem()) {
       // Force: the catalog cache identity (bridge URL, prefs, profile-dir
       // hash, scope) cannot see in-place ~/.claude/settings.json profile

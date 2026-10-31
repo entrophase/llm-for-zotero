@@ -70,6 +70,14 @@ import {
   isUnifiedHistoryRowListed,
   listUnifiedHistoryEntries,
 } from "../../unifiedHistorySource";
+import {
+  loadAllAntigravityConversationHistory,
+  loadAntigravityConversationHistoryScope,
+} from "../../../../antigravity/historyLoader";
+import {
+  createAntigravityGlobalPortalItem,
+  createAntigravityPaperPortalItem,
+} from "../../../../antigravity/portal";
 import { touchClaudeConversation } from "../../../../claudeCode/runtime";
 import {
   getConversationSystemPref,
@@ -511,6 +519,24 @@ export function createHistoryLifecycleController(
   const getConversationSystem = deps.getConversationSystem;
   const isClaudeConversationSystem = deps.isClaudeConversationSystem;
   const isCodexConversationSystem = deps.isCodexConversationSystem;
+  // Antigravity keeps its history the way Codex does (its own store, both
+  // scopes, no library lock), so these follow whichever of the two is shown.
+  const isCodexLikeConversationSystem = () =>
+    isCodexConversationSystem() || getConversationSystem() === "antigravity";
+  const codexLikeSystem = (): "codex" | "antigravity" =>
+    getConversationSystem() === "antigravity" ? "antigravity" : "codex";
+  const loadCodexLikeHistoryScope = (
+    params: Parameters<typeof loadCodexConversationHistoryScope>[0],
+  ) =>
+    codexLikeSystem() === "antigravity"
+      ? loadAntigravityConversationHistoryScope(params)
+      : loadCodexConversationHistoryScope(params);
+  const loadAllCodexLikeHistory = (
+    params: Parameters<typeof loadAllCodexConversationHistory>[0],
+  ) =>
+    codexLikeSystem() === "antigravity"
+      ? loadAllAntigravityConversationHistory(params)
+      : loadAllCodexConversationHistory(params);
   const isRuntimeConversationSystem = deps.isRuntimeConversationSystem;
   const isNoteSession = deps.isNoteSession;
   const isGlobalMode = deps.isGlobalMode;
@@ -886,17 +912,26 @@ export function createHistoryLifecycleController(
       system: ConversationSystem,
     ): Promise<ConversationHistoryEntry[]> => {
       const entries: ConversationHistoryEntry[] = [];
-      if (system === "claude_code" || system === "codex") {
+      if (
+        system === "claude_code" ||
+        system === "codex" ||
+        system === "antigravity"
+      ) {
         const summaries =
           system === "claude_code"
             ? await loadAllClaudeConversationHistory({
                 libraryID: normalizedLibraryID,
                 limit: searchLimit,
               })
-            : await loadAllCodexConversationHistory({
-                libraryID: normalizedLibraryID,
-                limit: searchLimit,
-              });
+            : system === "antigravity"
+              ? await loadAllAntigravityConversationHistory({
+                  libraryID: normalizedLibraryID,
+                  limit: searchLimit,
+                })
+              : await loadAllCodexConversationHistory({
+                  libraryID: normalizedLibraryID,
+                  limit: searchLimit,
+                });
         for (const summary of summaries) {
           const entry = createHistorySearchEntry({
             system,
@@ -2162,7 +2197,12 @@ export function createHistoryLifecycleController(
         ? createClaudeGlobalPortalItem(libraryID, normalizedConversationKey)
         : system === "codex"
           ? createCodexGlobalPortalItem(libraryID, normalizedConversationKey)
-          : createGlobalPortalItem(libraryID, normalizedConversationKey);
+          : system === "antigravity"
+            ? createAntigravityGlobalPortalItem(
+                libraryID,
+                normalizedConversationKey,
+              )
+            : createGlobalPortalItem(libraryID, normalizedConversationKey);
     if (
       !canCommitPanelConversation(
         body,
@@ -2354,10 +2394,11 @@ export function createHistoryLifecycleController(
       ) {
         return false;
       }
-    } else if (system === "codex") {
-      const nextItem = createCodexPaperPortalItem(
-        paperItem,
-        resolvedConversationKey,
+    } else if (system === "codex" || system === "antigravity") {
+      const nextItem = (
+        system === "codex"
+          ? createCodexPaperPortalItem(paperItem, resolvedConversationKey)
+          : createAntigravityPaperPortalItem(paperItem, resolvedConversationKey)
       ) as any;
       if (
         !canCommitPanelConversation(
@@ -2391,7 +2432,7 @@ export function createHistoryLifecycleController(
         return false;
       }
     }
-    if (system === "claude_code" || system === "codex") {
+    if (system !== "upstream") {
       remember(
         {
           system,
@@ -3560,8 +3601,8 @@ export function createHistoryLifecycleController(
           currentGlobalConversationKeyForSystem("claude_code") || activeKey()
         );
       }
-      if (system === "codex") {
-        return currentGlobalConversationKeyForSystem("codex") || activeKey();
+      if (system === "codex" || system === "antigravity") {
+        return currentGlobalConversationKeyForSystem(system) || activeKey();
       }
       return item &&
         isGlobalMode() &&
@@ -4173,9 +4214,9 @@ export function createHistoryLifecycleController(
           kind: "global",
           surface: selectionSurface(),
         })
-      : isCodexConversationSystem()
+      : isCodexLikeConversationSystem()
         ? recall({
-            system: "codex",
+            system: codexLikeSystem(),
             libraryID,
             kind: "global",
             surface: selectionSurface(),
