@@ -43,6 +43,7 @@ hl-corpus*
 .private-test-data/
 
 # Development documentation and planning files: never tracked, at any depth
+PLAN.md
 docs/
 doc/
 superpowers/

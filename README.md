@@ -4,6 +4,13 @@
 
 # LLM-for-Zotero: A Research Agent System for your Zotero Library
 
+> [!NOTE]
+> ### 📌 关于本分支 (About this Fork)
+> 本仓库是 [yilewang/llm-for-zotero](https://github.com/yilewang/llm-for-zotero) 的定制分支，基于 upstream `main` 整合并加固了 **Google Antigravity CLI (`agy`)** 支持（整合 PR #522 与 PR #521）。
+> 
+> - **特性**：支持在 Zotero 内直接调用 Google Antigravity CLI 驱动模型，支持实时流式回答、Activity Trace 深度思考/工具调用追踪、会话隔离与 Windows 静态系统代理自动探测。
+> - **致谢**：感谢原作者 [@yilewang](https://github.com/yilewang) 及所有 upstream 贡献者的出色工作！
+
 [![Zotero support](https://img.shields.io/badge/Zotero-supported-green?style=flat-square&logo=zotero&logoColor=CC2936)](https://www.zotero.org)
 [![Using Zotero Plugin Template](https://img.shields.io/badge/Using-Zotero%20Plugin%20Template-blue?style=flat-square&logo=github)](https://github.com/windingwind/zotero-plugin-template)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg?style=flat-square)](https://www.gnu.org/licenses/agpl-3.0)
