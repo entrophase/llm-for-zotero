@@ -9,12 +9,13 @@
 > 本仓库是 [yilewang/llm-for-zotero](https://github.com/yilewang/llm-for-zotero) 的定制分支，基于 upstream `main` 整合并加固了 **Google Antigravity CLI (`agy`)** 支持（整合 PR #522 与 PR #521）。
 > 
 > - **特性**：支持在 Zotero 内直接调用 Google Antigravity CLI 驱动模型，支持实时流式回答、Activity Trace 深度思考/工具调用追踪、会话隔离与 Windows 静态系统代理自动探测。
+> - **DSH ACP（v3.9.16.2）**：通过本机官方 DSH CLI，在 Zotero 中使用独立对话、跨重启续问、论文引用跳转及工具审批。[下载 XPI](https://github.com/entrophase/llm-for-zotero/releases/download/v3.9.16.2/llm-for-zotero.xpi) · [设置与验收记录](https://github.com/entrophase/llm-for-zotero/blob/v3.9.16.2/DSH_ACP.md)
 > - **致谢**：感谢原作者 [@yilewang](https://github.com/yilewang) 及所有 upstream 贡献者的出色工作！
 
 [![Zotero support](https://img.shields.io/badge/Zotero-supported-green?style=flat-square&logo=zotero&logoColor=CC2936)](https://www.zotero.org)
 [![Using Zotero Plugin Template](https://img.shields.io/badge/Using-Zotero%20Plugin%20Template-blue?style=flat-square&logo=github)](https://github.com/windingwind/zotero-plugin-template)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg?style=flat-square)](https://www.gnu.org/licenses/agpl-3.0)
-[![Latest release](https://img.shields.io/github/v/release/yilewang/llm-for-zotero?style=flat-square)](https://github.com/yilewang/llm-for-zotero/releases)
+[![Fork release](https://img.shields.io/github/v/release/entrophase/llm-for-zotero?style=flat-square)](https://github.com/entrophase/llm-for-zotero/releases)
 [![GitHub Stars](https://img.shields.io/github/stars/yilewang/llm-for-zotero?style=flat-square)](https://github.com/yilewang/llm-for-zotero/stargazers)
 [![GitHub Downloads](https://img.shields.io/github/downloads/yilewang/llm-for-zotero/total?style=flat-square)](https://github.com/yilewang/llm-for-zotero/releases)
 [![buymeacoffee](https://img.shields.io/badge/Support-Buy%20Me%20A%20Coffee-FF813F?style=flat-square&logo=buy-me-a-coffee&logoColor=white)](https://buymeacoffee.com/yat.lok)
@@ -62,6 +63,7 @@ How to do a library chat literature review with llm-for-zotero agent
 - [WebChat Setup](#webchat-setup-chatgpt-web-sync)
 - [Codex Setup](#codex-setup-chatgpt-plus-subscribers)
 - [Claude Code Setup](#claude-code-setup)
+- [DSH ACP 设置](#dsh-acp-设置)
 - [MinerU PDF Parsing](#mineru-pdf-parsing)
 - [Privacy and Data Flow](#privacy-and-data-flow)
 - [Roadmap](#roadmap)
@@ -130,18 +132,28 @@ Server, Claude Code, and file upload workflows.
 ## Quick Start
 
 1. Download the latest `.xpi` file from the
-   [Releases page](https://github.com/yilewang/llm-for-zotero/releases).
+   [fork's Releases page](https://github.com/entrophase/llm-for-zotero/releases).
 2. In Zotero, open `Tools` -> `Add-ons` -> gear icon ->
    **Install Add-on From File**, then select the `.xpi`.
 3. Restart Zotero.
-4. Open `Preferences` -> `llm-for-zotero`, choose a provider, enter the base
-   URL, key, and model, then click **Test Connection**.
+4. Open `Preferences` -> `llm-for-zotero`. For a provider API, enter the base
+   URL, key, and model, then click **Test Connection**. For DSH, follow the
+   [DSH ACP setup](#dsh-acp-设置).
 5. Open a PDF in Zotero and click the LLM Assistant icon in the right-hand
    toolbar.
 
 If you do not want to use a provider API key, start with
 [WebChat](#webchat-setup-chatgpt-web-sync) or
 [Codex App Server](#codex-setup-chatgpt-plus-subscribers).
+
+## DSH ACP 设置
+
+1. 在 Zotero 中从文件安装本仓库的 `llm-for-zotero.xpi`。[下载 v3.9.16.2](https://github.com/entrophase/llm-for-zotero/releases/tag/v3.9.16.2)
+2. 准备 Node.js 24.9.0 或更新版本，以及已配置模型并完成登录的官方 `@deepseek-ai/dsh`。
+3. 打开 Zotero「设置 → llm-for-zotero → Agent」，启用 **DSH**。通常可以保留路径为空。若自动定位失败，可填写 DSH 入口脚本 `lib/bin.js` 和 Node 可执行文件的完整路径。
+4. 点击 **Test connection and tools**，确认连通后，在论文或文献库对话的运行时菜单中选择 **DSH**。**Test model (uses tokens)** 会单独发起模型请求。
+
+已在 Windows 上使用 Zotero 10.0.7、Node.js 24.18.0 和 DSH 0.2.2-rc.1 验证。DSH 使用自己的登录和会话，Zotero 保存显示历史，文库写入经 Zotero 确认。[详细设置与验收记录](https://github.com/entrophase/llm-for-zotero/blob/v3.9.16.2/DSH_ACP.md)
 
 ## Configuration
 
