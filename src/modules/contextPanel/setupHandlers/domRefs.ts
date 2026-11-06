@@ -42,6 +42,7 @@ export type PanelDomRefs = {
   codexSystemToggleBtn: HTMLButtonElement | null;
   claudeSystemToggleBtn: HTMLButtonElement | null;
   antigravitySystemToggleBtn: HTMLButtonElement | null;
+  dshSystemToggleBtn: HTMLButtonElement | null;
   selectTextBtn: HTMLButtonElement | null;
   screenshotBtn: HTMLButtonElement | null;
   uploadBtn: HTMLButtonElement | null;
@@ -203,6 +204,9 @@ export function getPanelDomRefs(body: Element): PanelDomRefs {
     ) as HTMLButtonElement | null,
     antigravitySystemToggleBtn: body.querySelector(
       "#llm-antigravity-system-toggle",
+    ) as HTMLButtonElement | null,
+    dshSystemToggleBtn: body.querySelector(
+      "#llm-dsh-system-toggle",
     ) as HTMLButtonElement | null,
     claudeSystemToggleBtn: body.querySelector(
       "#llm-claude-system-toggle",

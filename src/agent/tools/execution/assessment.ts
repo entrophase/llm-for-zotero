@@ -229,7 +229,7 @@ export class InvocationAssessor {
         directDecision = {
           kind: "confirm",
           reason:
-            "Review the proposed changes before Antigravity applies them.",
+            "Review the proposed changes before the external runtime applies them.",
         };
       }
     }

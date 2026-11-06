@@ -73,6 +73,7 @@ export type AssistantTurnDeps = {
   isCodexNativeTurn: boolean;
   /** An Antigravity turn gets the same activity trace for agy's steps. */
   isAntigravityTurn?: boolean;
+  isDshTurn?: boolean;
   /**
    * The turn's usage ledger. Built by the flow, because whether the turn
    * counts as a question is flow policy (a retry does not).
@@ -274,7 +275,7 @@ export function createAssistantTurn(deps: AssistantTurnDeps): AssistantTurn {
 
     attachCodexTrace(forcedSkillIds?: string[]): void {
       trace =
-        deps.isCodexNativeTurn || deps.isAntigravityTurn
+        deps.isCodexNativeTurn || deps.isAntigravityTurn || deps.isDshTurn
           ? createCodexTrace(message, stream.queueRefresh)
           : null;
       noteExplicitCodexNativeSkillInvocations(trace, forcedSkillIds);

@@ -329,11 +329,36 @@ export type AntigravityGlobalPortalItem = {
   getField: (field: string) => string;
   isRegularItem: () => boolean;
 };
+export type DshGlobalPortalItem = {
+  __llmDshGlobalPortalItem: true;
+  __llmDshConversationKind: "global";
+  id: number;
+  libraryID: number;
+  parentID?: number;
+  attachmentContentType?: string;
+  isAttachment: () => boolean;
+  getAttachments: () => number[];
+  getField: (field: string) => string;
+  isRegularItem: () => boolean;
+};
 
 export type AntigravityPaperPortalItem = {
   __llmAntigravityPaperPortalItem: true;
   __llmAntigravityConversationKind: "paper";
   __llmAntigravityPaperPortalBaseItemID: number;
+  id: number;
+  libraryID: number;
+  parentID?: number;
+  attachmentContentType?: string;
+  isAttachment: () => boolean;
+  getAttachments: () => number[];
+  getField: (field: string) => string;
+  isRegularItem: () => boolean;
+};
+export type DshPaperPortalItem = {
+  __llmDshPaperPortalItem: true;
+  __llmDshConversationKind: "paper";
+  __llmDshPaperPortalBaseItemID: number;
   id: number;
   libraryID: number;
   parentID?: number;

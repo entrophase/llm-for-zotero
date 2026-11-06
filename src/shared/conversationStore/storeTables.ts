@@ -41,7 +41,9 @@ const CLAUDE_CATALOG_TABLE = "llm_for_zotero_claude_conversations";
 const CODEX_MESSAGES_TABLE = "llm_for_zotero_codex_messages";
 const CODEX_CATALOG_TABLE = "llm_for_zotero_codex_conversations";
 const ANTIGRAVITY_MESSAGES_TABLE = "llm_for_zotero_antigravity_messages";
+const DSH_MESSAGES_TABLE = "llm_for_zotero_dsh_messages";
 const ANTIGRAVITY_CATALOG_TABLE = "llm_for_zotero_antigravity_conversations";
+const DSH_CATALOG_TABLE = "llm_for_zotero_dsh_conversations";
 
 /** Each store's tables, by store. */
 export const CONVERSATION_STORE_TABLES_BY_SYSTEM: Readonly<
@@ -76,6 +78,14 @@ export const CONVERSATION_STORE_TABLES_BY_SYSTEM: Readonly<
       paper: ANTIGRAVITY_CATALOG_TABLE,
     },
   },
+  dsh: {
+    system: "dsh",
+    messageTable: DSH_MESSAGES_TABLE,
+    catalogTables: {
+      global: DSH_CATALOG_TABLE,
+      paper: DSH_CATALOG_TABLE,
+    },
+  },
 };
 
 /**
@@ -87,6 +97,7 @@ export const CONVERSATION_STORE_TABLES: readonly ConversationStoreTables[] = [
   CONVERSATION_STORE_TABLES_BY_SYSTEM.claude_code,
   CONVERSATION_STORE_TABLES_BY_SYSTEM.codex,
   CONVERSATION_STORE_TABLES_BY_SYSTEM.antigravity,
+  CONVERSATION_STORE_TABLES_BY_SYSTEM.dsh,
 ];
 
 /**

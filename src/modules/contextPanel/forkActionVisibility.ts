@@ -13,7 +13,8 @@ function normalizeConversationSystem(
   return value === "upstream" ||
     value === "claude_code" ||
     value === "codex" ||
-    value === "antigravity"
+    value === "antigravity" ||
+    value === "dsh"
     ? value
     : null;
 }

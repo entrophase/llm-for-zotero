@@ -1,3 +1,5 @@
+import { appendDshMessage } from "../../dsh/store";
+import { appendAntigravityMessage } from "../../antigravity/store";
 import { clearStandaloneSelection } from "./conversationSelection";
 import { setStandaloneSidePanelSlideDurationForTest } from "./standaloneSidePanel";
 import {
@@ -277,6 +279,7 @@ import {
   bindEmbeddedPanelHost,
   bindTestPanelHost,
   capturePanelOperationLease,
+  evaluatePanelOwnership,
   markSidePanelBody,
   resolveSelectionSurfaceForBody,
 } from "./panelHostOwnership";
@@ -645,6 +648,9 @@ async function appendWorkflowStoredMessage(
     await appendClaudeMessage(conversationKey, message);
     return;
   }
+  if (system === "dsh") return appendDshMessage(conversationKey, message);
+  if (system === "antigravity")
+    return appendAntigravityMessage(conversationKey, message);
   await appendMessage(conversationKey, message);
 }
 
@@ -749,7 +755,13 @@ function readRuntimeSystemToggles(
   )
     .map((button) => {
       const system = button.dataset.conversationSystem;
-      if (system !== "codex" && system !== "claude_code") return null;
+      if (
+        system !== "codex" &&
+        system !== "claude_code" &&
+        system !== "antigravity" &&
+        system !== "dsh"
+      )
+        return null;
       return {
         system,
         visible: groupVisible && button.style.display !== "none",
@@ -1034,6 +1046,10 @@ const WORKFLOW_CONVERSATION_PERSISTENCE_TABLES = {
   antigravity: {
     catalogs: ["llm_for_zotero_antigravity_conversations"],
     messages: "llm_for_zotero_antigravity_messages",
+  },
+  dsh: {
+    catalogs: ["llm_for_zotero_dsh_conversations"],
+    messages: "llm_for_zotero_dsh_messages",
   },
 } as const;
 
@@ -3032,6 +3048,7 @@ async function sendLiveChatTurn(
   const countAssistants = (history: Message[]) =>
     history.filter((message) => message.role === "assistant").length;
   const assistantsBefore = countAssistants(readHistory());
+  const sendSettledBefore = getWorkflowTestSendSettledSequence();
   const probes = createChatTurnPromptProbes(panel.body);
   const previousInterceptor = getWorkflowTestSendInterceptor();
   lastSend = null;
@@ -3063,6 +3080,14 @@ async function sendLiveChatTurn(
     let earlierWrappersWhileStreaming: HTMLElement[] | null = null;
     while (!answer) {
       const history = readHistory();
+      if (
+        getWorkflowTestSendSettledSequence() > sendSettledBefore &&
+        countAssistants(history) === assistantsBefore
+      ) {
+        throw new Error(
+          `Live send ended without an assistant: ${JSON.stringify({ panelId, sentItemId: (lastSend as SendQuestionOptions | null)?.item?.id, status: readStatusText(), ownership: evaluatePanelOwnership(panel.body, (lastSend as SendQuestionOptions | null)?.item) })}`,
+        );
+      }
       const newest = newestAssistant(history);
       if (newest && countAssistants(history) > assistantsBefore) {
         if (!newest.streaming) {
@@ -8250,7 +8275,13 @@ async function renamePanelHistoryConversation(
   }
   await Zotero.Promise.delay(300);
   const titles = {} as Record<ConversationSystem, string | null>;
-  for (const system of ["upstream", "codex", "claude_code"] as const) {
+  for (const system of [
+    "upstream",
+    "codex",
+    "claude_code",
+    "antigravity",
+    "dsh",
+  ] as const) {
     const entry = await conversationRepository
       .getCatalogEntry({ system, conversationKey })
       .catch(() => null);

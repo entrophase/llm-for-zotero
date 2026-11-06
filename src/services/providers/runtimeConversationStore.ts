@@ -144,7 +144,11 @@ import {
  * templated, so persisted names (tables, indexes, triggers) never change.
  */
 
-export type RuntimeConversationSystem = "claude_code" | "codex" | "antigravity";
+export type RuntimeConversationSystem =
+  | "claude_code"
+  | "codex"
+  | "antigravity"
+  | "dsh";
 export type RuntimeConversationKind = "global" | "paper";
 /** The Codex summary is the superset; Claude never sets the extra field. */
 export type RuntimeConversationSummary = CodexConversationSummary;
@@ -162,9 +166,9 @@ export type RuntimeStoreTables = {
 export type RuntimeStoreConfig = {
   system: RuntimeConversationSystem;
   /** The store name in warnings and error messages. */
-  storeLabel: "Claude" | "Codex" | "Antigravity";
+  storeLabel: "Claude" | "Codex" | "Antigravity" | "DSH";
   /** Persisted: names the store's startup fingerprint row. */
-  startupStoreID: "claude-code" | "codex" | "antigravity";
+  startupStoreID: "claude-code" | "codex" | "antigravity" | "dsh";
   /** Persisted: the store's instance-identity backfill migration. */
   instanceIdMigrationID: string;
   /**
@@ -193,12 +197,12 @@ export type RuntimeStoreConfig = {
   /** D3: extra catalog columns read into the summary (Codex only). */
   summaryExtraColumns: ReadonlyArray<{
     sql: string;
-    alias: "providerPermissionState";
+    alias: "providerPermissionState" | "runtimeBinding" | "runtimeGeneration";
   }>;
   /** D3: extra catalog columns that the summary upsert writes and merges. */
   upsertExtraColumns: ReadonlyArray<{
     column: string;
-    param: "providerPermissionState";
+    param: "providerPermissionState" | "runtimeBinding" | "runtimeGeneration";
   }>;
   /**
    * Deletes the agent rows of a conversation inside the deletion transaction.
@@ -215,6 +219,7 @@ export type RuntimeStoreConfig = {
    * metadata resets to NULL with the provider session (Codex only).
    */
   sessionResetColumns: readonly string[];
+  sessionResetAssignments?: readonly string[];
   hooks?: {
     /**
      * D5: runs inside the transaction of append, updateLatestUserMessage,
@@ -333,6 +338,8 @@ type RuntimeConversationRow = {
   title?: unknown;
   providerSessionId?: unknown;
   providerPermissionState?: unknown;
+  runtimeBinding?: unknown;
+  runtimeGeneration?: unknown;
   scopedConversationKey?: unknown;
   scopeType?: unknown;
   scopeId?: unknown;
@@ -397,8 +404,11 @@ export function createRuntimeConversationStore(config: RuntimeStoreConfig) {
 
   /** D4: the extra reset columns as SET lines after the provider session. */
   function sessionResetSql(indent: string): string {
-    return config.sessionResetColumns
-      .map((column) => `\n${indent}${column} = NULL,`)
+    return [
+      ...config.sessionResetColumns.map((column) => `${column} = NULL`),
+      ...(config.sessionResetAssignments || []),
+    ]
+      .map((assignment) => `\n${indent}${assignment},`)
       .join("");
   }
 
@@ -408,9 +418,17 @@ export function createRuntimeConversationStore(config: RuntimeStoreConfig) {
    */
   function readSummaryExtraColumns(
     row: RuntimeConversationRow,
-  ): Partial<Pick<RuntimeConversationSummary, "providerPermissionState">> {
+  ): Partial<
+    Pick<
+      RuntimeConversationSummary,
+      "providerPermissionState" | "runtimeBinding" | "runtimeGeneration"
+    >
+  > {
     const extra: Partial<
-      Pick<RuntimeConversationSummary, "providerPermissionState">
+      Pick<
+        RuntimeConversationSummary,
+        "providerPermissionState" | "runtimeBinding" | "runtimeGeneration"
+      >
     > = {};
     for (const column of config.summaryExtraColumns) {
       const value = row[column.alias];
@@ -1740,6 +1758,8 @@ export function createRuntimeConversationStore(config: RuntimeStoreConfig) {
     title?: string;
     providerSessionId?: string;
     providerPermissionState?: string;
+    runtimeBinding?: string;
+    runtimeGeneration?: string;
     scopedConversationKey?: string;
     scopeType?: string;
     scopeId?: string;

@@ -145,9 +145,9 @@ describe("conversation selection persist policy", function () {
       setupHandlers,
       "const offersWebChatModels = () =>\n    !isSidePanel && !isTornSurface(selectionSurface());",
     );
-    assert.include(
+    assert.match(
       setupHandlers,
-      '(entry) => offersWebChatModels() || entry.authMode !== "webchat",',
+      /\(entry\) =>\s*offersWebChatModels\(\) \|\| entry.authMode !== "webchat",/,
     );
   });
 

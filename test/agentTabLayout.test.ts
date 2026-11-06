@@ -43,6 +43,7 @@ describe("Agent preference tab layout", function () {
       'data-llm-agent-row="original"',
       'data-llm-agent-row="codex"',
       'data-llm-agent-row="antigravity"',
+      'data-llm-agent-row="dsh"',
       'data-llm-agent-row="claude"',
       'data-llm-agent-row="notes"',
       'data-llm-agent-row="saved-files"',

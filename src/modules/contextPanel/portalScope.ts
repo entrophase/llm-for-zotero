@@ -55,13 +55,25 @@ import {
   buildDefaultAntigravityPaperConversationKey,
 } from "../../antigravity/constants";
 import {
+  buildDefaultDshGlobalConversationKey,
+  buildDefaultDshPaperConversationKey,
+} from "../../dsh/constants";
+import {
   createAntigravityGlobalPortalItem,
   createAntigravityPaperPortalItem,
   isAntigravityGlobalPortalItem,
   isAntigravityPaperPortalItem,
   resolveAntigravityPaperPortalBaseItem,
 } from "../../antigravity/portal";
+import {
+  createDshGlobalPortalItem,
+  createDshPaperPortalItem,
+  isDshGlobalPortalItem,
+  isDshPaperPortalItem,
+  resolveDshPaperPortalBaseItem,
+} from "../../dsh/portal";
 import { isAntigravityModeEnabled } from "../../antigravity/prefs";
+import { isDshModeEnabled } from "../../dsh/prefs";
 import {
   resolveNoteFocusSystemSwitch as resolveNoteFocusSystemSwitchPolicy,
   resolveNoteEditingParentItem,
@@ -183,7 +195,8 @@ export function resolveDisplayConversationKind(
   return isGlobalPortalItem(item) ||
     isClaudeGlobalPortalItem(item) ||
     isCodexGlobalPortalItem(item) ||
-    isAntigravityGlobalPortalItem(item)
+    isAntigravityGlobalPortalItem(item) ||
+    isDshGlobalPortalItem(item)
     ? "global"
     : "paper";
 }
@@ -208,7 +221,8 @@ export function resolveConversationBaseItem(
     isGlobalPortalItem(targetItem) ||
     isClaudeGlobalPortalItem(targetItem) ||
     isCodexGlobalPortalItem(targetItem) ||
-    isAntigravityGlobalPortalItem(targetItem)
+    isAntigravityGlobalPortalItem(targetItem) ||
+    isDshGlobalPortalItem(targetItem)
   ) {
     return null;
   }
@@ -220,6 +234,9 @@ export function resolveConversationBaseItem(
   }
   if (isCodexPaperPortalItem(targetItem)) {
     return resolveCodexPaperPortalBaseItem(targetItem);
+  }
+  if (isDshPaperPortalItem(targetItem)) {
+    return resolveDshPaperPortalBaseItem(targetItem);
   }
   if (isAntigravityPaperPortalItem(targetItem)) {
     return resolveAntigravityPaperPortalBaseItem(targetItem);
@@ -238,7 +255,8 @@ export function resolvePaperChatSourceItem(
     isGlobalPortalItem(targetItem) ||
     isClaudeGlobalPortalItem(targetItem) ||
     isCodexGlobalPortalItem(targetItem) ||
-    isAntigravityGlobalPortalItem(targetItem)
+    isAntigravityGlobalPortalItem(targetItem) ||
+    isDshGlobalPortalItem(targetItem)
   ) {
     return null;
   }
@@ -250,6 +268,9 @@ export function resolvePaperChatSourceItem(
   }
   if (isCodexPaperPortalItem(targetItem)) {
     return resolveCodexPaperPortalBaseItem(targetItem);
+  }
+  if (isDshPaperPortalItem(targetItem)) {
+    return resolveDshPaperPortalBaseItem(targetItem);
   }
   if (isAntigravityPaperPortalItem(targetItem)) {
     return resolveAntigravityPaperPortalBaseItem(targetItem);
@@ -290,6 +311,9 @@ export function resolveConversationSystemForItem(
   ) {
     return "antigravity";
   }
+  if (isDshGlobalPortalItem(item) || isDshPaperPortalItem(item)) {
+    return "dsh";
+  }
   if (isGlobalPortalItem(item) || isPaperPortalItem(item)) {
     return "upstream";
   }
@@ -323,7 +347,10 @@ export function resolvePreferredConversationSystem(params: {
   if (itemSystem === "codex" && !isCodexAppServerModeEnabled()) {
     return "upstream";
   }
-  if (itemSystem === "antigravity" && !isAntigravityModeEnabled()) {
+  if (
+    (itemSystem === "antigravity" && !isAntigravityModeEnabled()) ||
+    (itemSystem === "dsh" && !isDshModeEnabled())
+  ) {
     return "upstream";
   }
   if (preferred === "claude_code" && !isClaudeCodeModeEnabled()) {
@@ -332,7 +359,10 @@ export function resolvePreferredConversationSystem(params: {
   if (preferred === "codex" && !isCodexAppServerModeEnabled()) {
     return "upstream";
   }
-  if (preferred === "antigravity" && !isAntigravityModeEnabled()) {
+  if (
+    (preferred === "antigravity" && !isAntigravityModeEnabled()) ||
+    (preferred === "dsh" && !isDshModeEnabled())
+  ) {
     return "upstream";
   }
   return itemSystem || preferred;
@@ -375,7 +405,8 @@ function resolvePreferredConversationMode(
   if (
     system === "claude_code" ||
     system === "codex" ||
-    system === "antigravity"
+    system === "antigravity" ||
+    system === "dsh"
   ) {
     const rememberedMode = recallMode(system, libraryID, {
       source: "active+persisted",
@@ -415,6 +446,14 @@ function resolveGlobalConversationKey(
       Number(
         recall({ system, libraryID, kind: "global", surface }) ||
           buildDefaultCodexGlobalConversationKey(libraryID),
+      ),
+    );
+  }
+  if (system === "dsh") {
+    return Math.floor(
+      Number(
+        recall({ system, libraryID, kind: "global", surface }) ||
+          buildDefaultDshGlobalConversationKey(libraryID),
       ),
     );
   }
@@ -461,12 +500,14 @@ export function resolveRememberedGlobalPanelItem(
     ? createClaudeGlobalPortalItem(normalizedLibraryID, conversationKey)
     : conversationSystem === "codex"
       ? createCodexGlobalPortalItem(normalizedLibraryID, conversationKey)
-      : conversationSystem === "antigravity"
-        ? createAntigravityGlobalPortalItem(
-            normalizedLibraryID,
-            conversationKey,
-          )
-        : createGlobalPortalItem(normalizedLibraryID, conversationKey);
+      : conversationSystem === "dsh"
+        ? createDshGlobalPortalItem(normalizedLibraryID, conversationKey)
+        : conversationSystem === "antigravity"
+          ? createAntigravityGlobalPortalItem(
+              normalizedLibraryID,
+              conversationKey,
+            )
+          : createGlobalPortalItem(normalizedLibraryID, conversationKey);
 }
 
 export function resolvePaperConversationKeyForBaseItem(
@@ -483,9 +524,11 @@ export function resolvePaperConversationKeyForBaseItem(
         ? buildDefaultClaudePaperConversationKey(paperItemID)
         : system === "codex"
           ? buildDefaultCodexPaperConversationKey(paperItemID)
-          : system === "antigravity"
-            ? buildDefaultAntigravityPaperConversationKey(paperItemID)
-            : paperItemID),
+          : system === "dsh"
+            ? buildDefaultDshPaperConversationKey(paperItemID)
+            : system === "antigravity"
+              ? buildDefaultAntigravityPaperConversationKey(paperItemID)
+              : paperItemID),
   );
   return Number.isFinite(rememberedPaperKey) && rememberedPaperKey > 0
     ? Math.floor(rememberedPaperKey)
@@ -554,7 +597,9 @@ export function resolveInitialPanelItemState(
       !isCodexAppServerModeEnabled()) ||
     ((isAntigravityGlobalPortalItem(item) ||
       isAntigravityPaperPortalItem(item)) &&
-      !isAntigravityModeEnabled())
+      !isAntigravityModeEnabled()) ||
+    ((isDshGlobalPortalItem(item) || isDshPaperPortalItem(item)) &&
+      !isDshModeEnabled())
   ) {
     item = resolveConversationBaseItem(item);
   }
@@ -590,7 +635,8 @@ export function resolveInitialPanelItemState(
     isPaperPortalItem(item) ||
     (isClaudePaperPortalItem(item) && isClaudeCodeModeEnabled()) ||
     (isCodexPaperPortalItem(item) && isCodexAppServerModeEnabled()) ||
-    (isAntigravityPaperPortalItem(item) && isAntigravityModeEnabled())
+    (isAntigravityPaperPortalItem(item) && isAntigravityModeEnabled()) ||
+    (isDshPaperPortalItem(item) && isDshModeEnabled())
   ) {
     return { item, basePaperItem };
   }
@@ -636,16 +682,21 @@ export function resolveInitialPanelItemState(
               basePaperItem,
               Math.floor(rememberedPaperKey),
             )
-          : conversationSystem === "antigravity"
-            ? createAntigravityPaperPortalItem(
+          : conversationSystem === "dsh"
+            ? createDshPaperPortalItem(
                 basePaperItem,
                 Math.floor(rememberedPaperKey),
               )
-            : createPaperPortalItem(
-                basePaperItem,
-                Math.floor(rememberedPaperKey),
-                0,
-              );
+            : conversationSystem === "antigravity"
+              ? createAntigravityPaperPortalItem(
+                  basePaperItem,
+                  Math.floor(rememberedPaperKey),
+                )
+              : createPaperPortalItem(
+                  basePaperItem,
+                  Math.floor(rememberedPaperKey),
+                  0,
+                );
   }
 
   return { item, basePaperItem };

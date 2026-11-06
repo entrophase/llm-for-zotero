@@ -30,7 +30,10 @@ export const CODEX_PAPER_CONVERSATION_KEY_BASE = 6_000_000_000_000_000;
 export const CODEX_CONVERSATION_KEY_END = 7_000_000_000_000_000;
 export const ANTIGRAVITY_GLOBAL_CONVERSATION_KEY_BASE =
   CODEX_CONVERSATION_KEY_END;
+export const DSH_GLOBAL_CONVERSATION_KEY_BASE = 1_000_000_000_000_000;
 export const ANTIGRAVITY_PAPER_CONVERSATION_KEY_BASE = 8_000_000_000_000_000;
+export const DSH_PAPER_CONVERSATION_KEY_BASE = 2_000_000_000_000_000;
+export const DSH_CONVERSATION_KEY_END = 3_000_000_000_000_000;
 // Still below Number.MAX_SAFE_INTEGER (~9.007e15): every key stays exact.
 export const RUNTIME_CONVERSATION_KEY_END = 9_000_000_000_000_000;
 
@@ -51,6 +54,10 @@ const RUNTIME_KIND_BASES: Record<
   antigravity: {
     global: ANTIGRAVITY_GLOBAL_CONVERSATION_KEY_BASE,
     paper: ANTIGRAVITY_PAPER_CONVERSATION_KEY_BASE,
+  },
+  dsh: {
+    global: DSH_GLOBAL_CONVERSATION_KEY_BASE,
+    paper: DSH_PAPER_CONVERSATION_KEY_BASE,
   },
 };
 
@@ -181,6 +188,7 @@ export function classifyConversationKey(
     "claude_code",
     "codex",
     "antigravity",
+    "dsh",
   ];
   const kinds: ConversationKeyKind[] = ["global", "paper"];
   for (const system of systems) {

@@ -79,7 +79,10 @@
     url("chrome://__addonRef__/content/icons/icon.svg"); background-size: 130%;
     } .llm-pref-panel .llm-pref-row-icon--codex { background-image:
     url("chrome://__addonRef__/content/icons/codex-logo.svg"); } .llm-pref-panel
-    .llm-pref-row-icon--antigravity { background-color: #4285f4; mask-image:
+    .llm-pref-row-icon--dsh { background-color: #4d6bfe; mask-image:
+    url("chrome://__addonRef__/content/icons/dsh.svg"); mask-repeat: no-repeat;
+    mask-position: center; mask-size: contain; } .llm-pref-row-icon--antigravity
+    { background-color: #4285f4; mask-image:
     url("chrome://__addonRef__/content/icons/antigravity.svg"); mask-repeat:
     no-repeat; mask-position: center; mask-size: contain; } .llm-pref-panel
     .llm-pref-row-icon--claude { background-color: #d97757; mask-image:
@@ -1828,6 +1831,115 @@
                     </html:div>
                   </html:div>
                 </html:details>
+              </html:div>
+            </html:div>
+          </html:div>
+
+          <!-- Official DSH ACP -->
+          <html:div
+            id="__addonRef__-dsh-card"
+            class="llm-pref-row"
+            data-llm-agent-row="dsh"
+            data-open="false"
+          >
+            <html:div class="llm-pref-row-head">
+              <html:span
+                class="llm-pref-row-icon llm-pref-row-icon--dsh"
+              ></html:span>
+              <html:button
+                class="llm-pref-row-toggle"
+                type="button"
+                aria-expanded="false"
+                aria-controls="__addonRef__-agent-row-dsh-body"
+              >
+                <html:span class="llm-pref-row-name">DSH</html:span>
+                <html:span class="llm-pref-row-sub">Official ACP</html:span>
+                <html:span
+                  class="llm-pref-row-summary"
+                  data-llm-row-summary="dsh"
+                ></html:span>
+              </html:button>
+              <html:input
+                id="__addonRef__-dsh-enable"
+                class="llm-pref-switch"
+                type="checkbox"
+                aria-label="Enable DSH"
+              ></html:input>
+            </html:div>
+            <html:div
+              id="__addonRef__-agent-row-dsh-body"
+              class="llm-pref-row-body"
+            >
+              <html:p class="llm-pref-hint"
+                >Uses your installed DSH and its sign-in. DSH keeps the
+                reasoning context; Zotero keeps the displayed history. Native
+                tool permissions appear here. Zotero library changes always
+                require review.</html:p
+              >
+              <html:div
+                id="__addonRef__-dsh-settings"
+                style="display: flex; flex-direction: column; gap: 12px"
+              >
+                <html:label for="__addonRef__-dsh-model">Model</html:label>
+                <html:select
+                  id="__addonRef__-dsh-model"
+                  class="llm-pref-input"
+                ></html:select>
+                <html:label for="__addonRef__-dsh-effort"
+                  >Reasoning effort</html:label
+                >
+                <html:select
+                  id="__addonRef__-dsh-effort"
+                  class="llm-pref-input"
+                ></html:select>
+                <html:button id="__addonRef__-dsh-refresh" type="button"
+                  >Refresh DSH options</html:button
+                >
+                <html:label for="__addonRef__-dsh-path"
+                  >DSH entry script (optional)</html:label
+                >
+                <html:input
+                  id="__addonRef__-dsh-path"
+                  class="llm-pref-input"
+                  type="text"
+                  placeholder="Automatic npm discovery; or absolute path to lib/bin.js"
+                ></html:input>
+                <html:label for="__addonRef__-dsh-node"
+                  >Node executable (optional)</html:label
+                >
+                <html:input
+                  id="__addonRef__-dsh-node"
+                  class="llm-pref-input"
+                  type="text"
+                  placeholder="Node.js 24.9.0 or newer"
+                ></html:input>
+                <html:label for="__addonRef__-dsh-home"
+                  >DSH Home (optional)</html:label
+                >
+                <html:input
+                  id="__addonRef__-dsh-home"
+                  class="llm-pref-input"
+                  type="text"
+                  placeholder="Uses DSH_HOME or your existing ~/.dsh"
+                ></html:input>
+                <html:span class="llm-pref-hint"
+                  >Changing Home or executable can prevent existing sessions
+                  from resuming. Restore the old setting or create a new
+                  conversation.</html:span
+                >
+                <html:div>
+                  <html:button id="__addonRef__-dsh-test" type="button"
+                    >Test connection and tools</html:button
+                  >
+                  <html:button id="__addonRef__-dsh-test-model" type="button"
+                    >Test model (uses tokens)</html:button
+                  >
+                </html:div>
+                <html:span
+                  id="__addonRef__-dsh-status"
+                  class="llm-pref-hint"
+                  role="status"
+                ></html:span>
               </html:div>
             </html:div>
           </html:div>

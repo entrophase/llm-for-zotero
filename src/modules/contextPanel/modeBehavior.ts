@@ -7,6 +7,7 @@ export type RuntimeModeResolutionInput = {
     | "claude_code"
     | "codex"
     | "antigravity"
+    | "dsh"
     | string
     | null;
   isWebChat?: boolean;
@@ -46,7 +47,8 @@ export function resolveRuntimeModeForConversation(
 ): ChatRuntimeMode {
   if (
     input.runtimeConversationSystem === "codex" ||
-    input.runtimeConversationSystem === "antigravity"
+    input.runtimeConversationSystem === "antigravity" ||
+    input.runtimeConversationSystem === "dsh"
   ) {
     return "chat";
   }

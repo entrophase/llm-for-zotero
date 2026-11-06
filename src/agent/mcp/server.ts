@@ -364,7 +364,7 @@ type ZoteroMcpScopeMetadata = {
     action: import("../types").AgentPendingAction,
   ) => Promise<import("../types").AgentConfirmationResolution>;
   clarificationHistory?: AgentRuntimeRequest["clarificationHistory"];
-  runtimeAuthority?: "claude" | "codex" | "antigravity";
+  runtimeAuthority?: "claude" | "codex" | "antigravity" | "dsh";
   /** Host lifecycle signal; never supplied by MCP tool arguments. */
   signal?: AbortSignal;
   /** Durable provider run that owns direct document artifacts. */
@@ -964,7 +964,8 @@ function normalizeActiveScope(
     runtimeAuthority:
       scope.runtimeAuthority === "claude" ||
       scope.runtimeAuthority === "codex" ||
-      scope.runtimeAuthority === "antigravity"
+      scope.runtimeAuthority === "antigravity" ||
+      scope.runtimeAuthority === "dsh"
         ? scope.runtimeAuthority
         : undefined,
     runId: normalizeText(scope.runId, 256),
@@ -1101,9 +1102,20 @@ export function registerScopedZoteroMcpScope(
 }
 
 function releaseScopedMcpScope(token: string): void {
+  scopedMcpDiscovery.delete(token);
   scopedZoteroMcpScopes.get(token)?.controller.abort();
   scopedZoteroMcpScopes.delete(token);
   clearMcpReadDedupeCacheForScopeToken(token);
+}
+
+const scopedMcpDiscovery = new Map<string, string[]>();
+
+/** Actual HTTP tools/list witnessed for this turn's credential. */
+export function getScopedZoteroMcpDiscoveredTools(
+  token: string,
+): readonly string[] {
+  pruneExpiredScopedMcpScopes();
+  return scopedMcpDiscovery.get(token) || [];
 }
 
 /** Refreshes the mutable per-turn authority carried by an already-issued
@@ -1578,10 +1590,9 @@ function isAuthorized(headers: Record<string, string> | undefined): boolean {
   const scopeToken = getHeader(headers, ZOTERO_MCP_SCOPE_HEADER).trim();
   if (scopeToken && authorization === `Bearer ${scopeToken}`) {
     pruneExpiredScopedMcpScopes();
-    return (
-      scopedZoteroMcpScopes.get(scopeToken)?.scope.runtimeAuthority ===
-      "antigravity"
-    );
+    const authority =
+      scopedZoteroMcpScopes.get(scopeToken)?.scope.runtimeAuthority;
+    return authority === "antigravity" || authority === "dsh";
   }
   return authorization === `Bearer ${getOrCreateZoteroMcpBearerToken()}`;
 }
@@ -1634,7 +1645,10 @@ function isMcpToolVisibleInScope(
   scope: ZoteroMcpActiveScope | null,
 ): boolean {
   if (!isMcpExposedTool(tool)) return false;
-  if (scope?.runtimeAuthority === "antigravity") {
+  if (
+    scope?.runtimeAuthority === "antigravity" ||
+    scope?.runtimeAuthority === "dsh"
+  ) {
     // A headless turn may only request effects through Zotero review.
     if (!scope.requestInteraction && tool.executionClass !== "read")
       return false;
@@ -2308,7 +2322,8 @@ function createToolContext(
     authorization: {
       kind: "external_runtime",
       standalone: !scope?.runtimeAuthority,
-      ...(scope?.runtimeAuthority === "antigravity"
+      ...(scope?.runtimeAuthority === "antigravity" ||
+      scope?.runtimeAuthority === "dsh"
         ? { reviewEffects: true }
         : {}),
     },
@@ -2320,7 +2335,9 @@ function createToolContext(
           ? "codex"
           : scope?.runtimeAuthority === "antigravity"
             ? "antigravity"
-            : undefined,
+            : scope?.runtimeAuthority === "dsh"
+              ? "dsh"
+              : undefined,
     signal: scope?.signal,
     runId,
     item,
@@ -2624,7 +2641,8 @@ async function handleToolsCall(
   if (
     !tool ||
     !isMcpExposedTool(tool.spec) ||
-    (scope?.runtimeAuthority === "antigravity" &&
+    ((scope?.runtimeAuthority === "antigravity" ||
+      scope?.runtimeAuthority === "dsh") &&
       !isMcpToolVisibleInScope(tool.spec, scope))
   ) {
     const replacement = Object.prototype.hasOwnProperty.call(
@@ -2976,6 +2994,13 @@ async function handleRequest(
         deps.toolRegistry,
         resolveScopedMcpScope(headers),
       );
+      const token = getHeader(headers, ZOTERO_MCP_SCOPE_HEADER).trim();
+      if (token && scopedZoteroMcpScopes.has(token)) {
+        scopedMcpDiscovery.set(
+          token,
+          result.tools.map((tool) => tool.name),
+        );
+      }
       return makeJsonRpcHttpResponse(makeResult(id ?? null, result));
     }
 

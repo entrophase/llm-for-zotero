@@ -15,6 +15,10 @@ import {
   buildDefaultAntigravityPaperConversationKey,
 } from "../../antigravity/constants";
 import {
+  buildDefaultDshGlobalConversationKey,
+  buildDefaultDshPaperConversationKey,
+} from "../../dsh/constants";
+import {
   buildDefaultUpstreamGlobalConversationKey,
   isEphemeralConversationKey,
 } from "../../shared/conversationKeySpace";
@@ -100,7 +104,9 @@ function bindSyntheticPortalItemToEntry(
     __llmCodexGlobalPortalItem?: boolean;
     __llmCodexPaperPortalItem?: boolean;
     __llmAntigravityGlobalPortalItem?: boolean;
+    __llmDshGlobalPortalItem?: boolean;
     __llmAntigravityPaperPortalItem?: boolean;
+    __llmDshPaperPortalItem?: boolean;
     id: number;
   };
   if (
@@ -111,6 +117,8 @@ function bindSyntheticPortalItemToEntry(
     candidate.__llmCodexGlobalPortalItem ||
     candidate.__llmCodexPaperPortalItem ||
     candidate.__llmAntigravityGlobalPortalItem ||
+    candidate.__llmDshGlobalPortalItem ||
+    candidate.__llmDshPaperPortalItem ||
     candidate.__llmAntigravityPaperPortalItem
   ) {
     candidate.id = entry.conversationKey;
@@ -390,7 +398,9 @@ function buildDefaultRuntimeGlobalKey(
     ? buildDefaultClaudeGlobalConversationKey(libraryID)
     : system === "codex"
       ? buildDefaultCodexGlobalConversationKey(libraryID)
-      : buildDefaultAntigravityGlobalConversationKey(libraryID);
+      : system === "dsh"
+        ? buildDefaultDshGlobalConversationKey(libraryID)
+        : buildDefaultAntigravityGlobalConversationKey(libraryID);
 }
 
 function buildDefaultRuntimePaperKey(
@@ -401,7 +411,9 @@ function buildDefaultRuntimePaperKey(
     ? buildDefaultClaudePaperConversationKey(paperItemID)
     : system === "codex"
       ? buildDefaultCodexPaperConversationKey(paperItemID)
-      : buildDefaultAntigravityPaperConversationKey(paperItemID);
+      : system === "dsh"
+        ? buildDefaultDshPaperConversationKey(paperItemID)
+        : buildDefaultAntigravityPaperConversationKey(paperItemID);
 }
 
 async function provisionRuntimeConversationUncoalesced(

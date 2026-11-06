@@ -10,8 +10,11 @@ import {
   CODEX_PAPER_CONVERSATION_KEY_BASE,
   CODEX_CONVERSATION_KEY_END,
   ANTIGRAVITY_GLOBAL_CONVERSATION_KEY_BASE,
+  DSH_GLOBAL_CONVERSATION_KEY_BASE,
   ANTIGRAVITY_PAPER_CONVERSATION_KEY_BASE,
+  DSH_PAPER_CONVERSATION_KEY_BASE,
   RUNTIME_CONVERSATION_KEY_END,
+  DSH_CONVERSATION_KEY_END,
   UPSTREAM_GLOBAL_CONVERSATION_KEY_BASE,
   UPSTREAM_RUNTIME_CONVERSATION_KEY_END,
   isConversationKeyForKind,
@@ -151,7 +154,7 @@ function parseCanonicalConversationID(
   conversationID: string,
 ): ParsedCanonicalConversationID | null {
   const match =
-    /^lfz:([^:]+):(upstream|claude_code|codex):(global|paper):lib-(\d+):paper-(\d+):legacy-(\d+)$/.exec(
+    /^lfz:([^:]+):(upstream|claude_code|codex|antigravity|dsh):(global|paper):lib-(\d+):paper-(\d+):legacy-(\d+)$/.exec(
       conversationID,
     );
   if (!match) return null;
@@ -442,6 +445,23 @@ const ANTIGRAVITY_VALIDITY_SQL = [
   "  )",
   ")",
 ].join("\n");
+const DSH_VALIDITY_SQL = [
+  "(",
+  "  (",
+  "    c.kind = 'global'",
+  `    AND c.conversation_key >= ${DSH_GLOBAL_CONVERSATION_KEY_BASE}`,
+  `    AND c.conversation_key < ${DSH_PAPER_CONVERSATION_KEY_BASE}`,
+  "  )",
+  "  OR",
+  "  (",
+  "    c.kind = 'paper'",
+  `    AND c.conversation_key >= ${DSH_PAPER_CONVERSATION_KEY_BASE}`,
+  `    AND c.conversation_key < ${DSH_CONVERSATION_KEY_END}`,
+  "    AND c.paper_item_id IS NOT NULL",
+  "    AND c.paper_item_id > 0",
+  "  )",
+  ")",
+].join("\n");
 
 const RUNTIME_VALIDITY_SQL: Record<
   Exclude<ConversationSystem, "upstream">,
@@ -450,6 +470,7 @@ const RUNTIME_VALIDITY_SQL: Record<
   claude_code: CLAUDE_VALIDITY_SQL,
   codex: CODEX_VALIDITY_SQL,
   antigravity: ANTIGRAVITY_VALIDITY_SQL,
+  dsh: DSH_VALIDITY_SQL,
 };
 
 function getCoverageCatalogDescriptors(
@@ -476,7 +497,14 @@ function getCoverageCatalogDescriptors(
       },
     ];
   }
-  if (system === "antigravity") {
+  if (system === "dsh") {
+    return [
+      {
+        tableName: CONVERSATION_STORE_TABLES_BY_SYSTEM.dsh.catalogTables.global,
+        validitySql: DSH_VALIDITY_SQL,
+      },
+    ];
+  } else if (system === "antigravity") {
     return [
       {
         tableName:
@@ -768,6 +796,7 @@ export async function refreshConversationSearchIndex(): Promise<boolean> {
   await refreshConversationSearchIndexForSystem("claude_code");
   await refreshConversationSearchIndexForSystem("codex");
   await refreshConversationSearchIndexForSystem("antigravity");
+  await refreshConversationSearchIndexForSystem("dsh");
   return true;
 }
 

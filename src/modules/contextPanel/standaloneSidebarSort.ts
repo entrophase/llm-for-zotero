@@ -108,16 +108,18 @@ export type StandaloneSidebarGroupKey =
   | "upstream"
   | "codex"
   | "claude_code"
-  | "antigravity";
+  | "antigravity"
+  | "dsh";
 
 export const DEFAULT_STANDALONE_SIDEBAR_GROUP_ORDER: readonly StandaloneSidebarGroupKey[] =
-  ["upstream", "codex", "claude_code", "antigravity"];
+  ["upstream", "codex", "claude_code", "antigravity", "dsh"];
 
 export function getStandaloneSidebarGroupLabel(
   key: StandaloneSidebarGroupKey,
 ): string {
   if (key === "codex") return "Codex";
   if (key === "claude_code") return "Claude";
+  if (key === "dsh") return "DSH";
   if (key === "antigravity") return "Antigravity";
   return "Agent";
 }

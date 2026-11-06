@@ -187,6 +187,7 @@ type SendFlowControllerDeps = {
   isClaudeConversationSystem: () => boolean;
   isCodexConversationSystem: () => boolean;
   isAntigravityConversationSystem?: () => boolean;
+  isDshConversationSystem?: () => boolean;
   normalizeConversationTitleSeed: (raw: unknown) => string;
   getConversationKey: (item: Zotero.Item) => number;
   getConversationWriteGeneration?: (conversationKey: number) => number;
@@ -201,6 +202,11 @@ type SendFlowControllerDeps = {
     generation?: number,
   ) => Promise<void>;
   touchAntigravityConversationTitle?: (
+    conversationKey: number,
+    title: string,
+    generation?: number,
+  ) => Promise<void>;
+  touchDshConversationTitle?: (
     conversationKey: number,
     title: string,
     generation?: number,
@@ -341,6 +347,7 @@ export function createSendFlowController(deps: SendFlowControllerDeps): {
       isCodexConversationSystem: deps.isCodexConversationSystem(),
       isAntigravityConversationSystem:
         deps.isAntigravityConversationSystem?.() === true,
+      isDshConversationSystem: deps.isDshConversationSystem?.() === true,
       selectedProfile: panelSelectedProfile,
       currentModelName: deps.getCurrentModelName(),
       selectedReasoning: deps.getSelectedReasoning(),
@@ -687,12 +694,14 @@ export function createSendFlowController(deps: SendFlowControllerDeps): {
           ? deps.touchClaudeConversationTitle
           : panel.isCodexConversationSystem
             ? deps.touchCodexConversationTitle
-            : panel.isAntigravityConversationSystem &&
-                deps.touchAntigravityConversationTitle
-              ? deps.touchAntigravityConversationTitle
-              : panel.isGlobalMode
-                ? deps.touchGlobalConversationTitle
-                : deps.touchPaperConversationTitle;
+            : panel.isDshConversationSystem && deps.touchDshConversationTitle
+              ? deps.touchDshConversationTitle
+              : panel.isAntigravityConversationSystem &&
+                  deps.touchAntigravityConversationTitle
+                ? deps.touchAntigravityConversationTitle
+                : panel.isGlobalMode
+                  ? deps.touchGlobalConversationTitle
+                  : deps.touchPaperConversationTitle;
         void touchTitle(
           deps.getConversationKey(item),
           titleSeed,

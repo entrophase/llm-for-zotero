@@ -31,7 +31,8 @@ export type StartupSchemaStoreID =
   | "upstream"
   | "claude-code"
   | "codex"
-  | "antigravity";
+  | "antigravity"
+  | "dsh";
 
 export type StartupSchemaPass = {
   /**

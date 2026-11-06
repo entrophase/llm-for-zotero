@@ -54,15 +54,21 @@ import {
   isAntigravityModeEnabled,
   getAntigravityRuntimeModelPref,
 } from "../../antigravity/prefs";
+import { isDshModeEnabled, getDshRuntimeModelPref } from "../../dsh/prefs";
 import {
   ANTIGRAVITY_DEFAULT_MODEL_ID,
   ANTIGRAVITY_RUNTIME_PROVIDER_LABEL,
 } from "../../antigravity/modelCatalog";
 import {
+  DSH_DEFAULT_MODEL_ID,
+  DSH_RUNTIME_PROVIDER_LABEL,
+} from "../../dsh/modelCatalog";
+import {
   forgetAntigravitySentContext,
   runAntigravityPanelTurn,
 } from "../../antigravity/runtime";
-import { toAntigravityTraceStep } from "./antigravityTrace";
+import { forgetDshSentContext, runDshPanelTurn } from "../../dsh/runtime";
+import { toAntigravityTraceStep, toDshTraceStep } from "./antigravityTrace";
 import {
   appendAntigravityMessage,
   clearAntigravityConversationSessionMetadata,
@@ -71,6 +77,14 @@ import {
   updateLatestAntigravityAssistantMessage,
   updateLatestAntigravityUserMessage,
 } from "../../antigravity/store";
+import {
+  appendDshMessage,
+  clearDshConversationSessionMetadata,
+  pruneDshConversation,
+  updateDshAssistantMessageQuoteLocations,
+  updateLatestDshAssistantMessage,
+  updateLatestDshUserMessage,
+} from "../../dsh/store";
 import { archiveCodexAppServerThread } from "../../codexAppServer/nativeClient";
 import {
   enqueueConversationCleanupJob,
@@ -2270,17 +2284,19 @@ async function updateStoredLatestUserMessageByConversationUnlocked(
         )
       : storageSystem === "codex"
         ? await updateLatestCodexUserMessage(conversationKey, message, options)
-        : storageSystem === "antigravity"
-          ? await updateLatestAntigravityUserMessage(
-              conversationKey,
-              message,
-              options,
-            )
-          : await updateStoredLatestUserMessage(
-              conversationKey,
-              message,
-              options,
-            );
+        : storageSystem === "dsh"
+          ? await updateLatestDshUserMessage(conversationKey, message, options)
+          : storageSystem === "antigravity"
+            ? await updateLatestAntigravityUserMessage(
+                conversationKey,
+                message,
+                options,
+              )
+            : await updateStoredLatestUserMessage(
+                conversationKey,
+                message,
+                options,
+              );
   if (!written && options?.expectedTimestamp !== undefined) {
     // The row is gone (for example, the turn was deleted), so nothing was
     // written. Not an error for the caller, but worth a trace.
@@ -2438,17 +2454,23 @@ async function updateStoredLatestAssistantMessageByConversationUnlocked(
             withContextUsage(),
             options,
           )
-        : storageSystem === "antigravity"
-          ? await updateLatestAntigravityAssistantMessage(
+        : storageSystem === "dsh"
+          ? await updateLatestDshAssistantMessage(
               conversationKey,
               withContextUsage(),
               options,
             )
-          : await updateStoredLatestAssistantMessage(
-              conversationKey,
-              message,
-              options,
-            );
+          : storageSystem === "antigravity"
+            ? await updateLatestAntigravityAssistantMessage(
+                conversationKey,
+                withContextUsage(),
+                options,
+              )
+            : await updateStoredLatestAssistantMessage(
+                conversationKey,
+                message,
+                options,
+              );
   if (!written && options?.expectedTimestamp !== undefined) {
     // The row is gone (for example, the turn was deleted), so nothing was
     // written, and there is no answer to publish a plan document for.
@@ -2552,17 +2574,23 @@ export async function updateStoredAssistantQuoteLocations(
             target,
             request.writes,
           )
-        : storageSystem === "antigravity"
-          ? updateAntigravityAssistantMessageQuoteLocations(
+        : storageSystem === "dsh"
+          ? updateDshAssistantMessageQuoteLocations(
               conversationKey,
               target,
               request.writes,
             )
-          : updateStoredAssistantMessageQuoteLocations(
-              conversationKey,
-              target,
-              request.writes,
-            );
+          : storageSystem === "antigravity"
+            ? updateAntigravityAssistantMessageQuoteLocations(
+                conversationKey,
+                target,
+                request.writes,
+              )
+            : updateStoredAssistantMessageQuoteLocations(
+                conversationKey,
+                target,
+                request.writes,
+              );
   });
 }
 
@@ -2634,6 +2662,9 @@ async function persistConversationMessage(
       } else if (storageSystem === "codex") {
         await appendCodexMessage(conversationKey, message, undefined);
         await pruneCodexConversation(conversationKey, PERSISTED_HISTORY_LIMIT);
+      } else if (storageSystem === "dsh") {
+        await appendDshMessage(conversationKey, message, undefined);
+        await pruneDshConversation(conversationKey, PERSISTED_HISTORY_LIMIT);
       } else if (storageSystem === "antigravity") {
         await appendAntigravityMessage(conversationKey, message, undefined);
         await pruneAntigravityConversation(
@@ -3667,7 +3698,10 @@ type QueuedInputDrainScope = {
 function normalizeQueuedInputConversationSystem(
   value: ConversationSystem | string | null | undefined,
 ): ConversationSystem {
-  return value === "claude_code" || value === "codex" || value === "antigravity"
+  return value === "claude_code" ||
+    value === "codex" ||
+    value === "antigravity" ||
+    value === "dsh"
     ? value
     : "upstream";
 }
@@ -4254,6 +4288,16 @@ function isAntigravityConversationRequest(params: {
     params.modelProviderLabel === ANTIGRAVITY_RUNTIME_PROVIDER_LABEL
   );
 }
+function isDshConversationRequest(params: {
+  item: Zotero.Item;
+  modelProviderLabel?: string;
+}): boolean {
+  if (!isDshModeEnabled()) return false;
+  return (
+    resolveConversationSystemForItem(params.item) === "dsh" ||
+    params.modelProviderLabel === DSH_RUNTIME_PROVIDER_LABEL
+  );
+}
 
 function resolveEffectiveConversationSystem(params: {
   item: Zotero.Item;
@@ -4269,6 +4313,7 @@ function resolveEffectiveConversationSystem(params: {
   const itemSystem = resolveConversationSystemForItem(params.item);
   if (itemSystem) return itemSystem;
   if (isCodexAppServerConversationRequest(params)) return "codex";
+  if (isDshConversationRequest(params)) return "dsh";
   if (isAntigravityConversationRequest(params)) return "antigravity";
   if (params.modelProviderLabel === "Claude Code") {
     return "claude_code";
@@ -4337,6 +4382,25 @@ export function resolveEffectiveRequestConfig(params: {
     };
   }
 
+  if (isDshConversationRequest(params)) {
+    // DSH owns authentication; the plugin supplies no provider key or URL.
+    // The base is a placeholder the shared request checks accept.
+    const model =
+      (params.model || "").trim() ||
+      getDshRuntimeModelPref() ||
+      DSH_DEFAULT_MODEL_ID;
+    return {
+      model,
+      apiBase: "dsh-cli://local",
+      apiKey: "",
+      authMode: "api_key",
+      providerProtocol: "openai_chat_compat",
+      modelEntryId: params.modelEntryId || `dsh::${model}`,
+      modelProviderLabel: DSH_RUNTIME_PROVIDER_LABEL,
+      reasoning: undefined,
+      advanced: params.advanced,
+    };
+  }
   if (isAntigravityConversationRequest(params)) {
     // agy is a local process signed in with Google; it needs no key or URL.
     // The base is a placeholder the shared request checks accept.
@@ -6082,6 +6146,7 @@ export const syncComposeContextForInlineEditForTests =
 export async function editLatestUserMessageAndRetry(
   opts: import("./types").EditRetryOptions,
 ): Promise<EditLatestTurnResult> {
+  if (resolveConversationSystemForItem(opts.item) === "dsh") return "stale";
   const {
     body,
     item,
@@ -6189,7 +6254,8 @@ export async function editLatestUserMessageAndRetry(
     }) || retryConversationSystem;
   const retryRuntimeMode: ChatRuntimeMode =
     retryConversationSystem === "codex" ||
-    retryConversationSystem === "antigravity"
+    retryConversationSystem === "antigravity" ||
+    retryConversationSystem === "dsh"
       ? "chat"
       : targetRuntimeMode ||
         (retryPair.assistantMessage.runMode === "agent" ? "agent" : "chat");
@@ -6507,6 +6573,7 @@ export async function retryLatestAssistantResponse(
   onProviderDispatch?: () => void,
   retryOptions?: { continueIncomplete?: boolean },
 ) {
+  if (resolveConversationSystemForItem(item) === "dsh") return false;
   const ownershipLease = capturePanelOperationLease(body);
   if (
     !ownershipLease ||
@@ -6669,8 +6736,9 @@ export async function retryLatestAssistantResponse(
     effectiveConversationSystem === "codex" &&
     effectiveRequestConfig.authMode === "codex_app_server";
   const isAntigravityTurn = effectiveConversationSystem === "antigravity";
+  const isDshTurn = effectiveConversationSystem === "dsh";
   assistantMessage.runMode =
-    isCodexNativeTurn || isAntigravityTurn ? "agent" : "chat";
+    isCodexNativeTurn || isAntigravityTurn || isDshTurn ? "agent" : "chat";
   assistantMessage.modelName = effectiveRequestConfig.model;
   assistantMessage.modelEntryId = effectiveRequestConfig.modelEntryId;
   assistantMessage.modelProviderLabel =
@@ -6678,7 +6746,9 @@ export async function retryLatestAssistantResponse(
   assistantMessage.waitingAnimationStartedAt =
     assistantMessage.modelProviderLabel === "Claude Code" ||
     assistantMessage.modelProviderLabel === "Codex" ||
-    assistantMessage.modelProviderLabel === ANTIGRAVITY_RUNTIME_PROVIDER_LABEL
+    assistantMessage.modelProviderLabel ===
+      ANTIGRAVITY_RUNTIME_PROVIDER_LABEL ||
+    assistantMessage.modelProviderLabel === DSH_RUNTIME_PROVIDER_LABEL
       ? Date.now()
       : undefined;
   const {
@@ -6820,6 +6890,7 @@ export async function retryLatestAssistantResponse(
     requestId: thisRequestId,
     isCodexNativeTurn,
     isAntigravityTurn,
+    isDshTurn,
     usageRecorder,
     refreshMessage: () => refreshAssistantMessageSafely(assistantMessage),
     refreshChat: refreshChatSafely,
@@ -7183,14 +7254,23 @@ export async function retryLatestAssistantResponse(
       setStatusSafely("Workflow request captured", "ready");
       return;
     }
-    const estimatedContextSnapshot = setContextUsageSnapshot(conversationKey, {
-      contextTokens: finalPrepared.inputCap.estimatedAfterTokens,
-      contextWindow: finalPrepared.inputCap.limitTokens,
-      inputLimitSource: finalPrepared.inputCap.limitSource,
-      estimated: true,
-      source: "estimated",
-    });
-    renderContextUsageSnapshot(body, ui.tokenUsageEl, estimatedContextSnapshot);
+    if (!isDshTurn) {
+      const estimatedContextSnapshot = setContextUsageSnapshot(
+        conversationKey,
+        {
+          contextTokens: finalPrepared.inputCap.estimatedAfterTokens,
+          contextWindow: finalPrepared.inputCap.limitTokens,
+          inputLimitSource: finalPrepared.inputCap.limitSource,
+          estimated: true,
+          source: "estimated",
+        },
+      );
+      renderContextUsageSnapshot(
+        body,
+        ui.tokenUsageEl,
+        estimatedContextSnapshot,
+      );
+    }
 
     assistantTurn.start();
     const handleReasoning = createStreamReasoningHandler({
@@ -7241,7 +7321,7 @@ export async function retryLatestAssistantResponse(
       llmHistory,
     });
     const nativeExecutionRequest =
-      isCodexNativeTurn || isAntigravityTurn
+      isCodexNativeTurn || isAntigravityTurn || isDshTurn
         ? await initAgentSubsystem().then(async (runtime) =>
             runtime.prepareExecutionRequest(
               await buildAgentRuntimeRequest(
@@ -7269,18 +7349,19 @@ export async function retryLatestAssistantResponse(
     // produces, including on abort, so the turn owes a usage row.
     assistantTurn.dispatched();
     retryDispatched = true;
-    const modelOutcome: ModelTurnOutcome = isAntigravityTurn
-      ? await runAntigravityPanelTurn(
+    const modelOutcome: ModelTurnOutcome = isDshTurn
+      ? await runDshPanelTurn(
           {
             conversationKey,
+            runId: assistantMessage.agentRunId,
+            sourceMessageTimestamp: assistantMessage.timestamp,
             messages: finalPrepared.messages,
             model: effectiveRequestConfig.model,
             attachedPastChatText: codexPastChatText || undefined,
             reasoning: effectiveRequestConfig.reasoning,
             signal: getAbortController(conversationKey)?.signal,
             executionRequest: nativeExecutionRequest,
-            // A retry replaces an answer agy already holds; start over from
-            // the transcript the panel shows.
+            // DSH rewrites are guarded before this path; the adapter also refuses them.
             freshConversation: true,
           },
           {
@@ -7288,6 +7369,19 @@ export async function retryLatestAssistantResponse(
             onDelta: assistantTurn.push,
             onStatus: (text) => setStatusSafely(text, "sending"),
             onUsage: handleUsage,
+            onContextUsage: (used, size) => {
+              const snapshot = setContextUsageSnapshot(conversationKey, {
+                contextTokens: used,
+                contextWindow: size,
+                contextWindowIsAuthoritative: true,
+                estimated: false,
+                source: "provider",
+              });
+              renderContextUsageSnapshot(body, ui.tokenUsageEl, snapshot);
+            },
+            onDocument: (documentId) => {
+              assistantMessage.documentId = documentId;
+            },
             onMcpActivity: (event) => {
               assistantTurn.codexTrace?.noteMcpToolActivity(event);
               assistantMessage.quoteCitations = mergeQuoteCitations(
@@ -7303,56 +7397,98 @@ export async function retryLatestAssistantResponse(
                 signal: getAbortController(conversationKey)?.signal,
                 isCurrent: () =>
                   !assistantTurn.wasCancelled() &&
-                  requireCurrentPanelOwnership(
-                    body,
-                    item,
-                    "antigravity-review",
-                  ),
+                  requireCurrentPanelOwnership(body, item, "dsh-review"),
               }),
             onActivity: (activity) =>
               assistantTurn.codexTrace?.appendRuntimeToolStep(
-                toAntigravityTraceStep(activity),
+                toDshTraceStep(activity),
               ),
           },
         )
-      : isCodexNativeTurn
-        ? await runCodexNativePanelTurn(
+      : isAntigravityTurn
+        ? await runAntigravityPanelTurn(
             {
-              executionRequest: nativeExecutionRequest!,
-              scope: codexScope!,
-              conversationGeneration,
-              model: effectiveRequestConfig.model,
+              conversationKey,
               messages: finalPrepared.messages,
+              model: effectiveRequestConfig.model,
+              attachedPastChatText: codexPastChatText || undefined,
               reasoning: effectiveRequestConfig.reasoning,
               signal: getAbortController(conversationKey)?.signal,
-              codexPath: getEffectiveCodexAppServerBinaryPath(
-                effectiveRequestConfig.apiBase,
-              ),
-              skillContext: codexRetrySkillContext(codexRetryRequestSite()),
+              executionRequest: nativeExecutionRequest,
+              // A retry replaces an answer agy already holds; start over from
+              // the transcript the panel shows.
+              freshConversation: true,
             },
             {
-              body,
-              item,
-              assistantMessage,
-              codexActivityTrace: assistantTurn.codexTrace,
-              flushResponseStream: assistantTurn.flush,
-              setStatusSafely,
-              handleDelta: assistantTurn.push,
-              handleReasoning,
-              handleUsage,
-              conversationKey,
-              conversationGeneration,
+              isLive: () => !assistantTurn.wasCancelled(),
+              onDelta: assistantTurn.push,
+              onStatus: (text) => setStatusSafely(text, "sending"),
+              onUsage: handleUsage,
+              onMcpActivity: (event) => {
+                assistantTurn.codexTrace?.noteMcpToolActivity(event);
+                assistantMessage.quoteCitations = mergeQuoteCitations(
+                  assistantMessage.quoteCitations,
+                  event.quoteCitations,
+                );
+              },
+              onHostInteraction: (action) =>
+                resolveCodexNativeHostInteractionWithTrace({
+                  body,
+                  action,
+                  trace: assistantTurn.codexTrace,
+                  signal: getAbortController(conversationKey)?.signal,
+                  isCurrent: () =>
+                    !assistantTurn.wasCancelled() &&
+                    requireCurrentPanelOwnership(
+                      body,
+                      item,
+                      "antigravity-review",
+                    ),
+                }),
+              onActivity: (activity) =>
+                assistantTurn.codexTrace?.appendRuntimeToolStep(
+                  toAntigravityTraceStep(activity),
+                ),
             },
           )
-        : await callDirectChatTurnWithRecovery({
-            request: {
-              ...requestParams,
-              systemMessages,
-            },
-            onDelta: assistantTurn.push,
-            onReasoning: handleReasoning,
-            onUsage: handleUsage,
-          });
+        : isCodexNativeTurn
+          ? await runCodexNativePanelTurn(
+              {
+                executionRequest: nativeExecutionRequest!,
+                scope: codexScope!,
+                conversationGeneration,
+                model: effectiveRequestConfig.model,
+                messages: finalPrepared.messages,
+                reasoning: effectiveRequestConfig.reasoning,
+                signal: getAbortController(conversationKey)?.signal,
+                codexPath: getEffectiveCodexAppServerBinaryPath(
+                  effectiveRequestConfig.apiBase,
+                ),
+                skillContext: codexRetrySkillContext(codexRetryRequestSite()),
+              },
+              {
+                body,
+                item,
+                assistantMessage,
+                codexActivityTrace: assistantTurn.codexTrace,
+                flushResponseStream: assistantTurn.flush,
+                setStatusSafely,
+                handleDelta: assistantTurn.push,
+                handleReasoning,
+                handleUsage,
+                conversationKey,
+                conversationGeneration,
+              },
+            )
+          : await callDirectChatTurnWithRecovery({
+              request: {
+                ...requestParams,
+                systemMessages,
+              },
+              onDelta: assistantTurn.push,
+              onReasoning: handleReasoning,
+              onUsage: handleUsage,
+            });
 
     if (assistantTurn.wasCancelled()) {
       assistantTurn.noteUsageOutcome("abort");
@@ -7501,6 +7637,19 @@ async function detachProviderForEdit(
 ): Promise<boolean> {
   if (!catalog) return false;
   const providerSessionId = String(catalog.providerSessionId || "").trim();
+  if (catalog.system === "dsh") {
+    // agy keeps the turns after the edit; drop the link so the next turn
+    // starts a new agy conversation from the transcript the panel keeps.
+    forgetDshSentContext(conversationKey);
+    if (providerSessionId) {
+      await clearDshConversationSessionMetadata(
+        conversationKey,
+        providerSessionId,
+        catalog.instanceID,
+      );
+    }
+    return true;
+  }
   if (catalog.system === "antigravity") {
     // agy keeps the turns after the edit; drop the link so the next turn
     // starts a new agy conversation from the transcript the panel keeps.
@@ -7632,6 +7781,7 @@ export async function editUserTurnAndRetry(opts: {
   reasoning?: LLMReasoningConfig;
   advanced?: AdvancedModelParams;
 }): Promise<boolean> {
+  if (resolveConversationSystemForItem(opts.item) === "dsh") return false;
   const {
     body,
     item,
@@ -7757,7 +7907,8 @@ export async function editUserTurnAndRetry(opts: {
     }) || retryConversationSystem;
   const retryRuntimeMode: ChatRuntimeMode =
     retryConversationSystem === "codex" ||
-    retryConversationSystem === "antigravity"
+    retryConversationSystem === "antigravity" ||
+    retryConversationSystem === "dsh"
       ? "chat"
       : targetRuntimeMode ||
         (history[assistantIndex]?.runMode === "agent" ? "agent" : "chat");
@@ -9152,7 +9303,8 @@ export async function sendQuestion(
     effectiveConversationSystem === "claude_code"
       ? "agent"
       : effectiveConversationSystem === "codex" ||
-          effectiveConversationSystem === "antigravity"
+          effectiveConversationSystem === "antigravity" ||
+          effectiveConversationSystem === "dsh"
         ? "chat"
         : runtimeMode;
   if (effectiveRuntimeMode === "agent" && !skipAgentDispatch) {
@@ -9358,6 +9510,7 @@ export async function sendQuestion(
     effectiveConversationSystem === "codex" &&
     effectiveRequestConfig.authMode === "codex_app_server";
   const isAntigravityTurn = effectiveConversationSystem === "antigravity";
+  const isDshTurn = effectiveConversationSystem === "dsh";
   const isCodexNativeCompactCommand =
     isCodexNativeTurn && isCompactCommandText(question);
   if (isCodexNativeCompactCommand) {
@@ -9713,7 +9866,9 @@ export async function sendQuestion(
     ...optimisticAssistantMessage,
     timestamp: optimisticAssistantMessage.timestamp,
     runMode:
-      isCodexNativeTurn || isAntigravityTurn ? "agent" : effectiveRuntimeMode,
+      isCodexNativeTurn || isAntigravityTurn || isDshTurn
+        ? "agent"
+        : effectiveRuntimeMode,
     agentRunId: agentRunId || undefined,
     modelName: effectiveRequestConfig.model,
     modelEntryId: effectiveRequestConfig.modelEntryId,
@@ -9722,7 +9877,8 @@ export async function sendQuestion(
       effectiveRequestConfig.modelProviderLabel === "Claude Code" ||
       effectiveRequestConfig.modelProviderLabel === "Codex" ||
       effectiveRequestConfig.modelProviderLabel ===
-        ANTIGRAVITY_RUNTIME_PROVIDER_LABEL
+        ANTIGRAVITY_RUNTIME_PROVIDER_LABEL ||
+      effectiveRequestConfig.modelProviderLabel === DSH_RUNTIME_PROVIDER_LABEL
         ? optimisticAssistantMessage.waitingAnimationStartedAt || Date.now()
         : undefined,
     reasoningOpen: isReasoningExpandedByDefault(),
@@ -9761,6 +9917,7 @@ export async function sendQuestion(
     requestId: thisRequestId,
     isCodexNativeTurn,
     isAntigravityTurn,
+    isDshTurn,
     usageRecorder,
     refreshMessage: () => refreshAssistantMessageSafely(assistantMessage),
     refreshChat: refreshChatSafely,
@@ -10172,14 +10329,23 @@ export async function sendQuestion(
       setStatusSafely("Workflow request captured", "ready");
       return;
     }
-    const estimatedContextSnapshot = setContextUsageSnapshot(conversationKey, {
-      contextTokens: finalPrepared.inputCap.estimatedAfterTokens,
-      contextWindow: finalPrepared.inputCap.limitTokens,
-      inputLimitSource: finalPrepared.inputCap.limitSource,
-      estimated: true,
-      source: "estimated",
-    });
-    renderContextUsageSnapshot(body, ui.tokenUsageEl, estimatedContextSnapshot);
+    if (!isDshTurn) {
+      const estimatedContextSnapshot = setContextUsageSnapshot(
+        conversationKey,
+        {
+          contextTokens: finalPrepared.inputCap.estimatedAfterTokens,
+          contextWindow: finalPrepared.inputCap.limitTokens,
+          inputLimitSource: finalPrepared.inputCap.limitSource,
+          estimated: true,
+          source: "estimated",
+        },
+      );
+      renderContextUsageSnapshot(
+        body,
+        ui.tokenUsageEl,
+        estimatedContextSnapshot,
+      );
+    }
 
     const handleReasoning = createStreamReasoningHandler({
       assistantMessage,
@@ -10233,7 +10399,7 @@ export async function sendQuestion(
       llmHistory,
     });
     const nativeExecutionRequest =
-      isCodexNativeTurn || isAntigravityTurn
+      isCodexNativeTurn || isAntigravityTurn || isDshTurn
         ? await initAgentSubsystem().then(async (runtime) => {
             const planRequest = await buildAgentRuntimeRequest(
               codexSendRequestParams(codexSendRequestSite()),
@@ -10259,10 +10425,12 @@ export async function sendQuestion(
     // The request is going out: from here the provider bills whatever it
     // produces, including on abort, so the turn owes a usage row.
     assistantTurn.dispatched();
-    const modelOutcome: ModelTurnOutcome = isAntigravityTurn
-      ? await runAntigravityPanelTurn(
+    const modelOutcome: ModelTurnOutcome = isDshTurn
+      ? await runDshPanelTurn(
           {
             conversationKey,
+            runId: assistantMessage.agentRunId,
+            sourceMessageTimestamp: assistantMessage.timestamp,
             messages: finalPrepared.messages,
             model: effectiveRequestConfig.model,
             attachedPastChatText: codexPastChatText || undefined,
@@ -10275,6 +10443,19 @@ export async function sendQuestion(
             onDelta: assistantTurn.push,
             onStatus: (text) => setStatusSafely(text, "sending"),
             onUsage: handleUsage,
+            onContextUsage: (used, size) => {
+              const snapshot = setContextUsageSnapshot(conversationKey, {
+                contextTokens: used,
+                contextWindow: size,
+                contextWindowIsAuthoritative: true,
+                estimated: false,
+                source: "provider",
+              });
+              renderContextUsageSnapshot(body, ui.tokenUsageEl, snapshot);
+            },
+            onDocument: (documentId) => {
+              assistantMessage.documentId = documentId;
+            },
             onMcpActivity: (event) => {
               assistantTurn.codexTrace?.noteMcpToolActivity(event);
               assistantMessage.quoteCitations = mergeQuoteCitations(
@@ -10290,57 +10471,97 @@ export async function sendQuestion(
                 signal: getAbortController(conversationKey)?.signal,
                 isCurrent: () =>
                   !assistantTurn.wasCancelled() &&
-                  requireCurrentPanelOwnership(
-                    body,
-                    item,
-                    "antigravity-review",
-                  ),
+                  requireCurrentPanelOwnership(body, item, "dsh-review"),
               }),
             onActivity: (activity) =>
               assistantTurn.codexTrace?.appendRuntimeToolStep(
-                toAntigravityTraceStep(activity),
+                toDshTraceStep(activity),
               ),
           },
         )
-      : isCodexNativeTurn
-        ? await runCodexNativePanelTurn(
+      : isAntigravityTurn
+        ? await runAntigravityPanelTurn(
             {
-              executionRequest: nativeExecutionRequest!,
-              scope: codexScope!,
-              conversationGeneration,
-              model: effectiveRequestConfig.model,
+              conversationKey,
               messages: finalPrepared.messages,
+              model: effectiveRequestConfig.model,
+              attachedPastChatText: codexPastChatText || undefined,
               reasoning: effectiveRequestConfig.reasoning,
               signal: getAbortController(conversationKey)?.signal,
-              codexPath: getEffectiveCodexAppServerBinaryPath(
-                effectiveRequestConfig.apiBase,
-              ),
-              skillContext: codexSendSkillContext(codexSendRequestSite()),
+              executionRequest: nativeExecutionRequest,
             },
             {
-              body,
-              item,
-              assistantMessage,
-              codexActivityTrace: assistantTurn.codexTrace,
-              flushResponseStream: assistantTurn.flush,
-              setStatusSafely,
-              handleDelta: assistantTurn.push,
-              handleReasoning,
-              handleUsage,
-              conversationKey,
-              conversationGeneration,
-              skillRoutingReceipt: nativeExecutionRequest?.skillRoutingReceipt,
+              isLive: () => !assistantTurn.wasCancelled(),
+              onDelta: assistantTurn.push,
+              onStatus: (text) => setStatusSafely(text, "sending"),
+              onUsage: handleUsage,
+              onMcpActivity: (event) => {
+                assistantTurn.codexTrace?.noteMcpToolActivity(event);
+                assistantMessage.quoteCitations = mergeQuoteCitations(
+                  assistantMessage.quoteCitations,
+                  event.quoteCitations,
+                );
+              },
+              onHostInteraction: (action) =>
+                resolveCodexNativeHostInteractionWithTrace({
+                  body,
+                  action,
+                  trace: assistantTurn.codexTrace,
+                  signal: getAbortController(conversationKey)?.signal,
+                  isCurrent: () =>
+                    !assistantTurn.wasCancelled() &&
+                    requireCurrentPanelOwnership(
+                      body,
+                      item,
+                      "antigravity-review",
+                    ),
+                }),
+              onActivity: (activity) =>
+                assistantTurn.codexTrace?.appendRuntimeToolStep(
+                  toAntigravityTraceStep(activity),
+                ),
             },
           )
-        : await callDirectChatTurnWithRecovery({
-            request: {
-              ...requestParams,
-              systemMessages,
-            },
-            onDelta: assistantTurn.push,
-            onReasoning: handleReasoning,
-            onUsage: handleUsage,
-          });
+        : isCodexNativeTurn
+          ? await runCodexNativePanelTurn(
+              {
+                executionRequest: nativeExecutionRequest!,
+                scope: codexScope!,
+                conversationGeneration,
+                model: effectiveRequestConfig.model,
+                messages: finalPrepared.messages,
+                reasoning: effectiveRequestConfig.reasoning,
+                signal: getAbortController(conversationKey)?.signal,
+                codexPath: getEffectiveCodexAppServerBinaryPath(
+                  effectiveRequestConfig.apiBase,
+                ),
+                skillContext: codexSendSkillContext(codexSendRequestSite()),
+              },
+              {
+                body,
+                item,
+                assistantMessage,
+                codexActivityTrace: assistantTurn.codexTrace,
+                flushResponseStream: assistantTurn.flush,
+                setStatusSafely,
+                handleDelta: assistantTurn.push,
+                handleReasoning,
+                handleUsage,
+                conversationKey,
+                conversationGeneration,
+                skillRoutingReceipt:
+                  nativeExecutionRequest?.skillRoutingReceipt,
+              },
+            )
+          : await callDirectChatTurnWithRecovery({
+              request: {
+                ...requestParams,
+                systemMessages,
+              },
+              onDelta: assistantTurn.push,
+              onReasoning: handleReasoning,
+              onUsage: handleUsage,
+            });
     if (assistantTurn.wasCancelled()) {
       assistantTurn.noteUsageOutcome("abort");
       await markCancelled();
@@ -10361,9 +10582,8 @@ export async function sendQuestion(
       citationPaperContexts: contextPlan.citationPaperContexts,
       conversationKey,
     });
-    assistantMessage.runMode = isCodexNativeTurn
-      ? "agent"
-      : effectiveRuntimeMode;
+    assistantMessage.runMode =
+      isCodexNativeTurn || isDshTurn ? "agent" : effectiveRuntimeMode;
     assistantMessage.agentRunId = agentRunId || assistantMessage.agentRunId;
     assistantTurn.presentCompletion({
       compactMarker: isCompactCommandText(question),
@@ -10396,7 +10616,7 @@ export async function sendQuestion(
     // Codex app-server owns model-visible history in native mode, so avoid a
     // background summarizer that would spin up a second app-server request.
     // agy keeps its own conversation; there is no API to summarize with.
-    if (!isCodexNativeTurn && !isAntigravityTurn) {
+    if (!isCodexNativeTurn && !isAntigravityTurn && !isDshTurn) {
       scheduleLLMSummary(conversationKey, rawLLMHistory, {
         model: effectiveRequestConfig.model,
         apiBase: effectiveRequestConfig.apiBase,
@@ -11070,7 +11290,10 @@ function renderChatForPanel(
   // to it or starts an edit; display toggles, copy, note, and expand stay.
   const readOnly = panelExtensions?.readOnly === true;
   // A side chat's turns are in memory only: no inline edit, retry, or fork.
-  const turnRewriteDisabled = readOnly || panelExtensions?.sideChat === true;
+  const turnRewriteDisabled =
+    readOnly ||
+    panelExtensions?.sideChat === true ||
+    (item && resolveConversationSystemForItem(item) === "dsh");
   const extraAssistantActions = panelExtensions?.extraAssistantActions || [];
   setPromptMenuTarget(body, null);
   const paperContextDisplayCache: PaperContextDisplayCache = new Map();
@@ -11129,12 +11352,15 @@ function renderChatForPanel(
   const forkLink = conversationForkLinks.get(conversationKey) || null;
   if (tokenUsageEl && !useTargetedRerender) {
     const snapshot = contextUsageSnapshots.get(conversationKey);
-    const recomputedSnapshot = estimateHistoryContextUsageSnapshot(
-      item,
-      history,
-      resolveSelectionSurfaceForBody(body),
-      conversationKey,
-    );
+    const recomputedSnapshot =
+      resolveConversationSystemForItem(item) === "dsh"
+        ? undefined
+        : estimateHistoryContextUsageSnapshot(
+            item,
+            history,
+            resolveSelectionSurfaceForBody(body),
+            conversationKey,
+          );
     const configuredLimitIsUserAuthoritative =
       recomputedSnapshot?.inputLimitSource === "advanced" ||
       recomputedSnapshot?.inputLimitSource === "user";

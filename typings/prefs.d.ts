@@ -125,6 +125,15 @@ declare namespace _ZoteroTypes {
       "libraryTextIndexVectors": boolean;
       "libraryTextIndexBudgetMB": number;
       "lastSeenVersion": string;
+      "enableDshMode": boolean;
+      "dshPath": string;
+      "dshNodePath": string;
+      "dshHome": string;
+      "dshModel": string;
+      "dshEffort": string;
+      "dshConversationModeMap": string;
+      "dshGlobalConversationMap": string;
+      "dshLastAllocatedConversationKeyMap": string;
     };
   }
 }

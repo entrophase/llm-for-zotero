@@ -53,7 +53,9 @@ export function resolvePaperPdfSupportForConversation(params: {
   isCodex: boolean;
   /** agy gets plain text only, so a paper is always sent as extracted text. */
   isAntigravity?: boolean;
+  isDsh?: boolean;
 }): PdfSupport {
+  if (params.isDsh) return "none";
   if (params.isAntigravity) return "none";
   return params.isClaudeCode || params.isCodex
     ? "local_path"
@@ -65,6 +67,7 @@ export function shouldDowngradePdfSourceForConversation(params: {
   isClaudeCode: boolean;
   isCodex: boolean;
   isAntigravity?: boolean;
+  isDsh?: boolean;
 }): boolean {
   const support = resolvePaperPdfSupportForConversation(params);
   return support !== "native" && support !== "local_path";

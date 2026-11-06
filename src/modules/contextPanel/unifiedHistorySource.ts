@@ -27,6 +27,7 @@ export const UNIFIED_HISTORY_SYSTEM_ORDER: readonly ConversationSystem[] = [
   "codex",
   "claude_code",
   "antigravity",
+  "dsh",
 ];
 
 /**
@@ -40,6 +41,7 @@ export function resolveUnifiedHistorySystems(params: {
   codexEnabled: boolean;
   claudeEnabled: boolean;
   antigravityEnabled?: boolean;
+  dshEnabled?: boolean;
   singleSystem: boolean;
 }): ConversationSystem[] {
   if (params.singleSystem) return [params.activeSystem];
@@ -49,7 +51,8 @@ export function resolveUnifiedHistorySystems(params: {
       system === params.activeSystem ||
       (system === "codex" && params.codexEnabled) ||
       (system === "claude_code" && params.claudeEnabled) ||
-      (system === "antigravity" && Boolean(params.antigravityEnabled)),
+      (system === "antigravity" && Boolean(params.antigravityEnabled)) ||
+      (system === "dsh" && Boolean(params.dshEnabled)),
   );
 }
 

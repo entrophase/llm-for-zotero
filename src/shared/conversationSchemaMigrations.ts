@@ -14,6 +14,7 @@ export const CONVERSATION_INSTANCE_ID_MIGRATION_IDS = {
   claudeCode: "conversation-instance-id-v1:claude-code",
   codex: "conversation-instance-id-v1:codex",
   antigravity: "conversation-instance-id-v1:antigravity",
+  dsh: "conversation-instance-id-v1:dsh",
 } as const;
 export const CONVERSATION_KEY_LEDGER_MIGRATION_ID =
   "conversation-key-ledger-v1:permanent-non-reuse";

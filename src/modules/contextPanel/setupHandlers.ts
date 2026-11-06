@@ -1,3 +1,5 @@
+import { clearDshConversation } from "../../dsh/store";
+import { clearConversationOwnedRuntimeState } from "./state";
 import { appLogger } from "../../core/logging";
 import { copyNoteEditingSelectedTextContext } from "./noteEditing/selectionController";
 import {
@@ -665,6 +667,7 @@ import {
   createCodexPaperPortalItem,
 } from "../../codexAppServer/portal";
 import { touchAntigravityConversationTitle } from "../../antigravity/store";
+import { touchDshConversationTitle } from "../../dsh/store";
 import {
   buildAntigravityRuntimeModelEntries,
   getAntigravityModelCatalogSnapshot,
@@ -673,13 +676,26 @@ import {
   toAntigravityModelPref,
 } from "../../antigravity/modelCatalog";
 import {
+  buildDshRuntimeModelEntries,
+  getDshReasoningChoices,
+  getDshModelCatalogSnapshot,
+  loadDshModelCatalog,
+  selectDshRuntimeEntry,
+  toDshModelPref,
+} from "../../dsh/modelCatalog";
+import {
   ANTIGRAVITY_EFFORT_OPTIONS,
   type AntigravityEffortMode,
 } from "../../antigravity/constants";
+import { type DshEffortMode } from "../../dsh/constants";
 import {
   createAntigravityGlobalPortalItem,
   createAntigravityPaperPortalItem,
 } from "../../antigravity/portal";
+import {
+  createDshGlobalPortalItem,
+  createDshPaperPortalItem,
+} from "../../dsh/portal";
 import {
   getAntigravityBinaryPathPref,
   getAntigravityEffortPref,
@@ -692,6 +708,18 @@ import {
   removeLastUsedAntigravityGlobalConversationKey,
   removeLastUsedAntigravityPaperConversationKey,
 } from "../../antigravity/prefs";
+import {
+  getDshBinaryPathPref,
+  getDshEffortPref,
+  getDshRuntimeModelPref,
+  setDshEffortPref,
+  setDshRuntimeModelPref,
+  getLastUsedDshConversationMode,
+  getLastUsedDshPaperConversationKey,
+  isDshModeEnabled,
+  removeLastUsedDshGlobalConversationKey,
+  removeLastUsedDshPaperConversationKey,
+} from "../../dsh/prefs";
 import type { CodexReasoningChoice } from "../../codex/catalogSelection";
 import {
   createCodexDirectModelReasoningController,
@@ -783,11 +811,13 @@ export function setupHandlers(
       ? "claude_code"
       : existingPanelRoot?.dataset?.conversationSystem === "codex"
         ? "codex"
-        : existingPanelRoot?.dataset?.conversationSystem === "antigravity"
-          ? "antigravity"
-          : existingPanelRoot?.dataset?.conversationSystem === "upstream"
-            ? "upstream"
-            : resolveConversationSystemForItem(initialItem);
+        : existingPanelRoot?.dataset?.conversationSystem === "dsh"
+          ? "dsh"
+          : existingPanelRoot?.dataset?.conversationSystem === "antigravity"
+            ? "antigravity"
+            : existingPanelRoot?.dataset?.conversationSystem === "upstream"
+              ? "upstream"
+              : resolveConversationSystemForItem(initialItem);
   const preferredConversationMode =
     existingPanelRoot?.dataset?.conversationKind === "global"
       ? "global"
@@ -897,6 +927,7 @@ export function setupHandlers(
     codexSystemToggleBtn,
     claudeSystemToggleBtn,
     antigravitySystemToggleBtn,
+    dshSystemToggleBtn,
     selectTextBtn,
     screenshotBtn,
     uploadBtn,
@@ -1127,12 +1158,14 @@ export function setupHandlers(
       ? "claude_code"
       : panelRoot.dataset.conversationSystem === "codex"
         ? "codex"
-        : panelRoot.dataset.conversationSystem === "antigravity"
-          ? "antigravity"
-          : resolvePreferredConversationSystem({
-              item,
-              surface: selectionSurface(),
-            });
+        : panelRoot.dataset.conversationSystem === "dsh"
+          ? "dsh"
+          : panelRoot.dataset.conversationSystem === "antigravity"
+            ? "antigravity"
+            : resolvePreferredConversationSystem({
+                item,
+                surface: selectionSurface(),
+              });
   let currentConversationSystem: ConversationSystem =
     resolvePreferredConversationSystem({
       item,
@@ -1146,10 +1179,12 @@ export function setupHandlers(
   const isCodexConversationSystem = () => getConversationSystem() === "codex";
   const isAntigravityConversationSystem = () =>
     getConversationSystem() === "antigravity";
+  const isDshConversationSystem = () => getConversationSystem() === "dsh";
   const isRuntimeConversationSystem = () =>
     isClaudeConversationSystem() ||
     isCodexConversationSystem() ||
-    isAntigravityConversationSystem();
+    isAntigravityConversationSystem() ||
+    isDshConversationSystem();
   const shouldRenderDynamicSlashMenuForCurrentConversation = () =>
     shouldRenderDynamicSlashMenu({
       itemPresent: Boolean(item),
@@ -1174,6 +1209,7 @@ export function setupHandlers(
     !isSidePanel && isCodexAppServerModeEnabled();
   const isAntigravityModeAvailable = () =>
     !isSidePanel && isAntigravityModeEnabled();
+  const isDshModeAvailable = () => !isSidePanel && isDshModeEnabled();
   let claudeModelCatalogStatus: "idle" | "loading" | "ready" | "error" = "idle";
   let claudeModelCatalogError = "";
   let claudeModelCatalogModels: ClaudeModelCatalogEntry[] = [];
@@ -1429,10 +1465,20 @@ export function setupHandlers(
       models: getAntigravityModelCatalogSnapshot().models,
       selectedModel: getAntigravityRuntimeModelPref(),
     });
+  const getDshRuntimeModelEntries = (): RuntimeModelEntry[] =>
+    buildDshRuntimeModelEntries({
+      models: getDshModelCatalogSnapshot().models,
+      selectedModel: getDshRuntimeModelPref(),
+    });
   const getSelectedAntigravityRuntimeEntry = (): RuntimeModelEntry =>
     selectAntigravityRuntimeEntry(
       getAntigravityRuntimeModelEntries(),
       getAntigravityRuntimeModelPref(),
+    );
+  const getSelectedDshRuntimeEntry = (): RuntimeModelEntry =>
+    selectDshRuntimeEntry(
+      getDshRuntimeModelEntries(),
+      getDshRuntimeModelPref(),
     );
   const getAntigravityEffortChoices = (): CodexReasoningChoice[] =>
     ANTIGRAVITY_EFFORT_OPTIONS.map((value) => ({
@@ -1444,9 +1490,19 @@ export function setupHandlers(
             ? "XHigh"
             : value[0]!.toUpperCase() + value.slice(1),
     }));
+  const getDshEffortChoices = (): CodexReasoningChoice[] =>
+    getDshReasoningChoices();
   const ensureAntigravityModelCatalogLoaded = (force = false) => {
     if (!isAntigravityConversationSystem()) return;
     void loadAntigravityModelCatalog(getAntigravityBinaryPathPref(), {
+      force,
+    }).then(() => {
+      if (!setupHandlersCleaned) refreshOpenCodexModelMenu();
+    });
+  };
+  const ensureDshModelCatalogLoaded = (force = false) => {
+    if (!isDshConversationSystem()) return;
+    void loadDshModelCatalog(getDshBinaryPathPref(), {
       force,
     }).then(() => {
       if (!setupHandlersCleaned) refreshOpenCodexModelMenu();
@@ -1495,6 +1551,7 @@ export function setupHandlers(
       codexEnabled: isCodexModeAvailable(),
       claudeEnabled: isClaudeModeAvailable(),
       antigravityEnabled: isAntigravityModeAvailable(),
+      dshEnabled: isDshModeAvailable(),
       isWebChat: webChatActive,
       isSideChat: isSidePanel,
       isTornWindow: isTornSurface(selectionSurface()),
@@ -1556,6 +1613,7 @@ export function setupHandlers(
       codex: codexSystemToggleBtn,
       claude_code: claudeSystemToggleBtn,
       antigravity: antigravitySystemToggleBtn,
+      dsh: dshSystemToggleBtn,
     },
   };
   let runtimeSystemSwitchInFlight = false;
@@ -1568,6 +1626,7 @@ export function setupHandlers(
       codexEnabled: isCodexModeAvailable(),
       claudeEnabled: isClaudeModeAvailable(),
       antigravityEnabled: isAntigravityModeAvailable(),
+      dshEnabled: isDshModeAvailable(),
       busy: runtimeSystemSwitchInFlight,
     });
     // The divider before the runtime systems goes when they do. Their
@@ -1734,7 +1793,9 @@ export function setupHandlers(
       if (resolvedNextSystem === "claude_code") {
         warmClaudeModeCaches();
       }
-      if (resolvedNextSystem === "antigravity") {
+      if (resolvedNextSystem === "dsh") {
+        ensureDshModelCatalogLoaded();
+      } else if (resolvedNextSystem === "antigravity") {
         ensureAntigravityModelCatalogLoaded();
       }
       updateRuntimeModeButton();
@@ -1771,7 +1832,9 @@ export function setupHandlers(
     if (nextSystem === "claude_code") {
       warmClaudeModeCaches();
     }
-    if (nextSystem === "antigravity") {
+    if (nextSystem === "dsh") {
+      ensureDshModelCatalogLoaded();
+    } else if (nextSystem === "antigravity") {
       ensureAntigravityModelCatalogLoaded();
     }
     const target = options?.target;
@@ -1867,7 +1930,9 @@ export function setupHandlers(
               kind: "global",
               surface,
             })
-          : nextSystem === "codex" || nextSystem === "antigravity"
+          : nextSystem === "codex" ||
+              nextSystem === "antigravity" ||
+              nextSystem === "dsh"
             ? recall({ system: nextSystem, libraryID, kind: "global", surface })
             : (() => {
                 // The library lock is the sidebar's; the window has none.
@@ -2160,7 +2225,8 @@ export function setupHandlers(
         rememberMode("claude_code", libraryID, mode, { surface });
       } else if (
         isCodexConversationSystem() ||
-        isAntigravityConversationSystem()
+        isAntigravityConversationSystem() ||
+        isDshConversationSystem()
       ) {
         const runtimeSystem = isCodexConversationSystem()
           ? "codex"
@@ -2272,12 +2338,20 @@ export function setupHandlers(
     const claudeModePrefKey = `${config.prefsPrefix}.enableClaudeCodeMode`;
     const codexModePrefKey = `${config.prefsPrefix}.enableCodexAppServerMode`;
     const antigravityModePrefKey = `${config.prefsPrefix}.enableAntigravityMode`;
+    const dshModePrefKey = `${config.prefsPrefix}.enableDshMode`;
     // The model menu and effort chip read these; the path also decides
     // which `agy models` list applies.
     const antigravityChoicePrefKeys = [
       `${config.prefsPrefix}.antigravityModel`,
       `${config.prefsPrefix}.antigravityEffort`,
       `${config.prefsPrefix}.antigravityPath`,
+    ];
+    const dshChoicePrefKeys = [
+      `${config.prefsPrefix}.dshModel`,
+      `${config.prefsPrefix}.dshEffort`,
+      `${config.prefsPrefix}.dshPath`,
+      `${config.prefsPrefix}.dshNodePath`,
+      `${config.prefsPrefix}.dshHome`,
     ];
     const permissionPrefObservers: Array<{
       key: string;
@@ -2320,6 +2394,7 @@ export function setupHandlers(
     let claudeObserverId: symbol | undefined;
     let codexObserverId: symbol | undefined;
     let antigravityObserverId: symbol | undefined;
+    let dshObserverId: symbol | undefined;
     const permissionObserverIds: symbol[] = [];
     const unregister = (observerId: symbol | undefined) => {
       if (observerId === undefined) return;
@@ -2334,6 +2409,7 @@ export function setupHandlers(
       unregister(claudeObserverId);
       unregister(codexObserverId);
       unregister(antigravityObserverId);
+      unregister(dshObserverId);
       for (const observerId of permissionObserverIds.splice(0)) {
         unregister(observerId);
       }
@@ -2341,6 +2417,7 @@ export function setupHandlers(
       claudeObserverId = undefined;
       codexObserverId = undefined;
       antigravityObserverId = undefined;
+      dshObserverId = undefined;
     };
     const isPanelUnavailable = () =>
       !(body as Element).isConnected ||
@@ -2411,6 +2488,21 @@ export function setupHandlers(
       updateRuntimeSystemToggles();
       updateRuntimeModeButton();
     };
+    const onDshModePrefChange = () => {
+      if (isPanelUnavailable()) {
+        cleanupPrefObservers?.();
+        return;
+      }
+      if (!isDshModeEnabled()) {
+        demoteConversationSystemOnEverySurface("dsh");
+        if (isDshConversationSystem()) {
+          void switchConversationSystem("upstream");
+          return;
+        }
+      }
+      updateRuntimeSystemToggles();
+      updateRuntimeModeButton();
+    };
     try {
       agentObserverId = (Zotero as any).Prefs.registerObserver(
         agentPrefKey,
@@ -2432,7 +2524,12 @@ export function setupHandlers(
         onAntigravityModePrefChange,
         true,
       );
-      for (const key of antigravityChoicePrefKeys) {
+      dshObserverId = (Zotero as any).Prefs.registerObserver(
+        dshModePrefKey,
+        onDshModePrefChange,
+        true,
+      );
+      for (const key of [...antigravityChoicePrefKeys, ...dshChoicePrefKeys]) {
         permissionObserverIds.push(
           (Zotero as any).Prefs.registerObserver(
             key,
@@ -2441,8 +2538,15 @@ export function setupHandlers(
                 cleanupPrefObservers?.();
                 return;
               }
-              if (!isAntigravityConversationSystem()) return;
-              if (key.endsWith(".antigravityPath")) {
+              if (
+                key.includes(".dsh")
+                  ? !isDshConversationSystem()
+                  : !isAntigravityConversationSystem()
+              )
+                return;
+              if (key.includes(".dsh") && !key.endsWith("Effort")) {
+                ensureDshModelCatalogLoaded(true);
+              } else if (key.endsWith(".antigravityPath")) {
                 ensureAntigravityModelCatalogLoaded(true);
               }
               updateModelButton();
@@ -3504,6 +3608,7 @@ export function setupHandlers(
       isClaudeCode: isClaudeConversationSystem(),
       isCodex: isCodexConversationSystem(),
       isAntigravity: isAntigravityConversationSystem(),
+      isDsh: isDshConversationSystem(),
     });
   };
 
@@ -5662,6 +5767,8 @@ export function setupHandlers(
         activeSystem: getConversationSystem(),
         codexEnabled: isCodexModeAvailable(),
         claudeEnabled: isClaudeModeAvailable(),
+        antigravityEnabled: isAntigravityModeAvailable(),
+        dshEnabled: isDshModeAvailable(),
         singleSystem: isSidePanel || isNoteSession(),
       }),
     isRuntimeSystemSwitchInFlight: () => runtimeSystemSwitchInFlight,
@@ -5748,7 +5855,8 @@ export function setupHandlers(
       !item ||
       (targetSystem === "codex" && !isCodexModeAvailable()) ||
       (targetSystem === "claude_code" && !isClaudeModeAvailable()) ||
-      (targetSystem === "antigravity" && !isAntigravityModeAvailable())
+      (targetSystem === "antigravity" && !isAntigravityModeAvailable()) ||
+      (targetSystem === "dsh" && !isDshModeAvailable())
     ) {
       return;
     }
@@ -5779,7 +5887,8 @@ export function setupHandlers(
       !item ||
       (system === "codex" && !isCodexModeAvailable()) ||
       (system === "claude_code" && !isClaudeModeAvailable()) ||
-      (system === "antigravity" && !isAntigravityModeAvailable())
+      (system === "antigravity" && !isAntigravityModeAvailable()) ||
+      (system === "dsh" && !isDshModeAvailable())
     ) {
       return false;
     }
@@ -5814,12 +5923,15 @@ export function setupHandlers(
       ? getClaudeRuntimeModelEntries()
       : isCodexConversationSystem()
         ? getCodexRuntimeModelEntries()
-        : isAntigravityConversationSystem()
-          ? getAntigravityRuntimeModelEntries()
-          : getAvailableModelEntries().filter(
-              // Neither a side chat nor a torn-off window runs on WebChat.
-              (entry) => offersWebChatModels() || entry.authMode !== "webchat",
-            );
+        : isDshConversationSystem()
+          ? getDshRuntimeModelEntries()
+          : isAntigravityConversationSystem()
+            ? getAntigravityRuntimeModelEntries()
+            : getAvailableModelEntries().filter(
+                // Neither a side chat nor a torn-off window runs on WebChat.
+                (entry) =>
+                  offersWebChatModels() || entry.authMode !== "webchat",
+              );
     const groupedChoices: Array<{
       providerLabel: string;
       entries: RuntimeModelEntry[];
@@ -5849,11 +5961,13 @@ export function setupHandlers(
       ? getSelectedClaudeRuntimeEntry()
       : isCodexConversationSystem()
         ? getSelectedCodexRuntimeEntry()
-        : isAntigravityConversationSystem()
-          ? getSelectedAntigravityRuntimeEntry()
-          : item
-            ? panelChoices.getSelectedModelEntry()
-            : null;
+        : isDshConversationSystem()
+          ? getSelectedDshRuntimeEntry()
+          : isAntigravityConversationSystem()
+            ? getSelectedAntigravityRuntimeEntry()
+            : item
+              ? panelChoices.getSelectedModelEntry()
+              : null;
     const currentModel =
       selectedEntry?.model ||
       choices[0]?.model ||
@@ -5891,7 +6005,9 @@ export function setupHandlers(
             }
           : null;
       }
-      if (isAntigravityConversationSystem()) {
+      if (isDshConversationSystem()) {
+        return null;
+      } else if (isAntigravityConversationSystem()) {
         // agy reports the Gemini and the Claude/GPT allowances apart; the
         // model decides which one the headline shows.
         return {
@@ -6126,6 +6242,32 @@ export function setupHandlers(
       },
     });
   };
+  const appendDshModelCatalogStatus = (menu: HTMLDivElement) => {
+    if (!isDshConversationSystem()) return;
+    const snapshot = getDshModelCatalogSnapshot();
+    appendModelCatalogStatus({
+      menu,
+      status: snapshot.status,
+      modelCount: snapshot.models.length,
+      loadingMessage: snapshot.models.length
+        ? t("Refreshing Dsh models…")
+        : t("Loading Dsh models…"),
+      errorMessage: snapshot.models.length
+        ? t("Could not refresh Dsh models. Showing the last known list.")
+        : t("Could not load Dsh models. agy will use its default model."),
+      errorTitle: snapshot.error,
+      emptyMessage: t(
+        "Dsh did not return any models; agy will use its default.",
+      ),
+      retryLabel: t("Retry loading Dsh models"),
+      onRetry: (event) => {
+        if (!isPrimaryPointerEvent(event)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        ensureDshModelCatalogLoaded(true);
+      },
+    });
+  };
 
   const appendClaudeModelCatalogStatus = (menu: HTMLDivElement) => {
     if (!isClaudeConversationSystem()) return;
@@ -6250,6 +6392,7 @@ export function setupHandlers(
     appendClaudeModelCatalogStatus(list);
     appendCodexModelCatalogStatus(list);
     appendAntigravityModelCatalogStatus(list);
+    appendDshModelCatalogStatus(list);
     codexDirectController?.appendCatalogStatus({
       menu: list,
       renderStatus: appendModelCatalogStatus,
@@ -6303,7 +6446,15 @@ export function setupHandlers(
             updateReasoningButton();
             return;
           }
-          if (isAntigravityConversationSystem()) {
+          if (isDshConversationSystem()) {
+            setDshRuntimeModelPref(toDshModelPref(entry.model));
+            setDshEffortPref("auto");
+            ensureDshModelCatalogLoaded(true);
+            setFloatingMenuOpen(modelMenu, MODEL_MENU_OPEN_CLASS, false);
+            updateModelButton();
+            updateReasoningButton();
+            return;
+          } else if (isAntigravityConversationSystem()) {
             setAntigravityRuntimeModelPref(toAntigravityModelPref(entry.model));
             setFloatingMenuOpen(modelMenu, MODEL_MENU_OPEN_CLASS, false);
             updateModelButton();
@@ -6375,6 +6526,7 @@ export function setupHandlers(
             isClaudeCode: isClaudeConversationSystem(),
             isCodex: isCodexConversationSystem(),
             isAntigravity: isAntigravityConversationSystem(),
+            isDsh: isDshConversationSystem(),
           });
           if (shouldDowngrade) {
             const papers = getManualPaperContextsForItem(
@@ -6714,7 +6866,26 @@ export function setupHandlers(
         selectedLevel,
       };
     }
-    if (isAntigravityConversationSystem()) {
+    if (isDshConversationSystem()) {
+      const selectedMode = getDshEffortPref();
+      const options: ReasoningOption[] = getDshEffortChoices()
+        .filter((choice) => choice.value !== "auto")
+        .map((choice) => ({
+          level: choice.value as LLMReasoningLevel,
+          enabled: true,
+          label: choice.label,
+        }));
+      return {
+        provider: "openai" as const,
+        currentModel,
+        options,
+        enabledLevels: options.map((option) => option.level),
+        selectedLevel:
+          selectedMode === "auto"
+            ? "none"
+            : (selectedMode as ReasoningLevelSelection),
+      };
+    } else if (isAntigravityConversationSystem()) {
       const selectedMode = getAntigravityEffortPref();
       const options: ReasoningOption[] = getAntigravityEffortChoices()
         .filter((choice) => choice.value !== "auto")
@@ -7068,33 +7239,38 @@ export function setupHandlers(
             getClaudeReasoningDisplayMode(),
           );
         })()
-      : isAntigravityConversationSystem()
-        ? getAntigravityEffortChoices().find(
-            (choice) => choice.value === getAntigravityEffortPref(),
+      : isDshConversationSystem()
+        ? getDshEffortChoices().find(
+            (choice) => choice.value === getDshEffortPref(),
           )?.label || "Auto"
-        : isCodexConversationSystem()
-          ? (() => {
-              const mode = panelChoices.getCodexReasoningMode();
-              return (
-                getCodexReasoningChoices().find(
-                  (choice) => choice.value.toLowerCase() === mode.toLowerCase(),
+        : isAntigravityConversationSystem()
+          ? getAntigravityEffortChoices().find(
+              (choice) => choice.value === getAntigravityEffortPref(),
+            )?.label || "Auto"
+          : isCodexConversationSystem()
+            ? (() => {
+                const mode = panelChoices.getCodexReasoningMode();
+                return (
+                  getCodexReasoningChoices().find(
+                    (choice) =>
+                      choice.value.toLowerCase() === mode.toLowerCase(),
+                  )?.label || "Auto"
+                );
+              })()
+            : directSelection.choices.length
+              ? directSelection.choices.find(
+                  (choice) =>
+                    choice.value.toLowerCase() ===
+                    directSelection.mode.toLowerCase(),
                 )?.label || "Auto"
-              );
-            })()
-          : directSelection.choices.length
-            ? directSelection.choices.find(
-                (choice) =>
-                  choice.value.toLowerCase() ===
-                  directSelection.mode.toLowerCase(),
-              )?.label || "Auto"
-            : available
-              ? getReasoningLevelDisplayLabel(
-                  selectedLevel as LLMReasoningLevel,
-                  provider,
-                  currentModel,
-                  options,
-                )
-              : "Not supported";
+              : available
+                ? getReasoningLevelDisplayLabel(
+                    selectedLevel as LLMReasoningLevel,
+                    provider,
+                    currentModel,
+                    options,
+                  )
+                : "Not supported";
     const active = Boolean(available && activeThinking);
     const reasoningLabel = resolvedReasoningLabel;
     const reasoningHint =
@@ -7266,7 +7442,19 @@ export function setupHandlers(
       }
       return;
     }
-    if (isAntigravityConversationSystem()) {
+    if (isDshConversationSystem()) {
+      appendReasoningChoiceButtons({
+        menu: reasoningMenu,
+        choices: getDshEffortChoices(),
+        currentValue: getDshEffortPref(),
+        onSelect: (value) => {
+          setDshEffortPref(value as DshEffortMode);
+          setFloatingMenuOpen(reasoningMenu, REASONING_MENU_OPEN_CLASS, false);
+          updateReasoningButton();
+        },
+      });
+      return;
+    } else if (isAntigravityConversationSystem()) {
       appendReasoningChoiceButtons({
         menu: reasoningMenu,
         choices: getAntigravityEffortChoices(),
@@ -7879,9 +8067,11 @@ export function setupHandlers(
       ? getSelectedClaudeRuntimeEntry()
       : isCodexConversationSystem()
         ? getSelectedCodexRuntimeEntry()
-        : isAntigravityConversationSystem()
-          ? getSelectedAntigravityRuntimeEntry()
-          : panelChoices.getSelectedModelEntry();
+        : isDshConversationSystem()
+          ? getSelectedDshRuntimeEntry()
+          : isAntigravityConversationSystem()
+            ? getSelectedAntigravityRuntimeEntry()
+            : panelChoices.getSelectedModelEntry();
     if (!selected) return null;
     return {
       ...selected,
@@ -7901,7 +8091,9 @@ export function setupHandlers(
     if (isCodexConversationSystem()) {
       return getSelectedCodexRuntimeEntry().advanced;
     }
-    if (isAntigravityConversationSystem()) {
+    if (isDshConversationSystem()) {
+      return getSelectedDshRuntimeEntry().advanced;
+    } else if (isAntigravityConversationSystem()) {
       return getSelectedAntigravityRuntimeEntry().advanced;
     }
     return getAdvancedModelParamsForEntry(entryId);
@@ -7915,6 +8107,7 @@ export function setupHandlers(
       );
     }
     // agy takes its effort as a flag the runtime reads from the pref.
+    if (isDshConversationSystem()) return undefined;
     if (isAntigravityConversationSystem()) return undefined;
     if (isCodexConversationSystem()) {
       const mode =
@@ -8432,6 +8625,7 @@ export function setupHandlers(
         isClaudeCode: isClaudeConversationSystem(),
         isCodex: isCodexConversationSystem(),
         isAntigravity: isAntigravityConversationSystem(),
+        isDsh: isDshConversationSystem(),
       }),
     uploadPdfForProvider: pdfPaperResolver.uploadPdfForProvider,
     resolvePdfBytes: pdfPaperResolver.resolvePdfBytes,
@@ -8445,12 +8639,14 @@ export function setupHandlers(
     isClaudeConversationSystem,
     isCodexConversationSystem,
     isAntigravityConversationSystem,
+    isDshConversationSystem,
     normalizeConversationTitleSeed,
     getConversationKey,
     getConversationWriteGeneration,
     touchClaudeConversationTitle,
     touchCodexConversationTitle,
     touchAntigravityConversationTitle,
+    touchDshConversationTitle,
     touchGlobalConversationTitle,
     touchPaperConversationTitle,
     getSelectedProfile,
@@ -8689,6 +8885,7 @@ export function setupHandlers(
               isClaudeCode: isClaudeConversationSystem(),
               isCodex: isCodexConversationSystem(),
               isAntigravity: isAntigravityConversationSystem(),
+              isDsh: isDshConversationSystem(),
             }),
           resolvePdfPaperAttachments:
             pdfPaperResolver.resolvePdfPaperAttachments,
@@ -8936,6 +9133,29 @@ export function setupHandlers(
         runtimeModeBtn?.focus();
       });
       runtimeMenu.appendChild(row);
+    }
+    if (currentSystem === "dsh" && item) {
+      const clear = runtimeMenu.ownerDocument.createElement("button");
+      clear.type = "button";
+      clear.className = "llm-permission-option";
+      clear.textContent = "Clear DSH conversation";
+      clear.addEventListener("click", () => {
+        const target = item;
+        if (!target) return;
+        const key = getConversationKey(target);
+        closeRuntimeMenu();
+        getAbortController(key)?.abort();
+        clearConversationOwnedRuntimeState(key);
+        void clearDshConversation(key)
+          .then(async () => {
+            await ensureConversationLoaded(target, { body });
+            if (item === target) refreshChat(body, target);
+          })
+          .catch((error) => {
+            if (status) setStatus(status, String(error), "error");
+          });
+      });
+      runtimeMenu.appendChild(clear);
     }
   };
   const stopRuntimeMenuPointerEvent = (event: Event) => event.stopPropagation();
@@ -9283,6 +9503,8 @@ export function setupHandlers(
       // A loaded catalog can change while this chat stays mounted. Revalidate
       // on each user opening and update the menu when model/list returns.
       void ensureCodexModelCatalogLoaded(true);
+    } else if (isDshConversationSystem()) {
+      ensureDshModelCatalogLoaded(true);
     } else if (isAntigravityConversationSystem()) {
       ensureAntigravityModelCatalogLoaded(true);
     } else if (isClaudeConversationSystem()) {

@@ -218,6 +218,7 @@ function buildUI(body: Element, item?: Zotero.Item | null) {
       codex: "llm-codex-system-toggle",
       claude_code: "llm-claude-system-toggle",
       antigravity: "llm-antigravity-system-toggle",
+      dsh: "llm-dsh-system-toggle",
     },
   });
   headerRuntimeControls.append(

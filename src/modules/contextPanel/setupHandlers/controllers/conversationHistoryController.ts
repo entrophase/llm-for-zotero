@@ -38,6 +38,8 @@ export type HistoryEntrySourceState = "active" | "orphan";
 export function getHistoryRowRuntimeLabel(system: ConversationSystem): string {
   if (system === "codex") return "Codex";
   if (system === "claude_code") return "Claude";
+  if (system === "antigravity") return "Antigravity";
+  if (system === "dsh") return "DSH";
   return "";
 }
 export type HistoryEntryLabelType = "paper" | "library" | "orphan";

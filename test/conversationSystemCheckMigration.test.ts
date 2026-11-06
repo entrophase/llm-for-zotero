@@ -89,6 +89,7 @@ describe("conversation system CHECK migration", function () {
     database
       .prepare("INSERT INTO ledger VALUES (3, 'antigravity', NULL)")
       .run();
+    database.prepare("INSERT INTO ledger VALUES (5, 'dsh', NULL)").run();
     assert.throws(
       () =>
         database.prepare("INSERT INTO ledger VALUES (4, 'other', NULL)").run(),

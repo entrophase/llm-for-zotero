@@ -6,6 +6,7 @@ export const CONVERSATION_SYSTEMS: readonly ConversationSystem[] = [
   "claude_code",
   "codex",
   "antigravity",
+  "dsh",
 ];
 
 export function isConversationSystem(

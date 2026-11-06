@@ -106,6 +106,7 @@ export function resolvePermissionSurface(params: {
       : { kind: "loading", provider: "codex", message: "Loading permissions…" };
   }
   // Antigravity's permission mode is a preference, not a footer choice.
+  if (params.conversationSystem === "dsh") return { kind: "hidden" };
   if (params.conversationSystem === "antigravity") return { kind: "hidden" };
   if (params.runtimeMode !== "agent") return { kind: "hidden" };
   return {
@@ -306,7 +307,11 @@ export function attachFooterPermissionControl(params: {
       originalSelectedId: getOriginalAgentPermissionMode(),
       claudeSelectedId: getClaudePermissionModePref(),
     };
-    if (provider === "upstream" || provider === "antigravity") {
+    if (
+      provider === "upstream" ||
+      provider === "antigravity" ||
+      provider === "dsh"
+    ) {
       render(resolvePermissionSurface(common));
       return;
     }

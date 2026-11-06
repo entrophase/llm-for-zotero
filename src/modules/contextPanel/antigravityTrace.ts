@@ -26,3 +26,10 @@ export function toAntigravityTraceStep(activity: AntigravityActivity): {
     ...(done ? { ok: !activity.failed } : {}),
   };
 }
+
+export function toDshTraceStep(activity: AntigravityActivity) {
+  return {
+    ...toAntigravityTraceStep(activity),
+    itemId: `dsh-tool-${activity.stepIndex}`,
+  };
+}

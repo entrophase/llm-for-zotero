@@ -1,3 +1,4 @@
+import { bindDshPreferences } from "../dsh/preferencesUI";
 import { bindMineruLocalPreferences } from "./mineruLocalPreferences";
 import { appLogger } from "../core/logging";
 import { createProviderRequestScope } from "../utils/providerTransport";
@@ -4212,6 +4213,7 @@ export async function registerPrefsScripts(_window: Window | undefined | null) {
   }
 
   bindAntigravityPreferences(doc);
+  bindDshPreferences(doc);
   bindCliProxyPreferences(doc);
 
   let codexReasoningCatalogRefreshId = 0;

@@ -106,6 +106,7 @@ export function getStoredConversationSystemPref(): ConversationSystem | null {
   const raw = getStringPref("conversationSystem").trim().toLowerCase();
   if (raw === "claude_code") return "claude_code";
   if (raw === "codex") return "codex";
+  if (raw === "dsh") return "dsh";
   if (raw === "antigravity") return "antigravity";
   if (raw === "upstream") return "upstream";
   return null;
@@ -115,7 +116,8 @@ export function setConversationSystemPref(system: ConversationSystem): void {
   if (
     system === "claude_code" ||
     system === "codex" ||
-    system === "antigravity"
+    system === "antigravity" ||
+    system === "dsh"
   ) {
     setPref("conversationSystem", system);
     return;

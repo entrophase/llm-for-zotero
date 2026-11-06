@@ -267,7 +267,8 @@ export type ConversationSystem =
   | "upstream"
   | "claude_code"
   | "codex"
-  | "antigravity";
+  | "antigravity"
+  | "dsh";
 
 export type GlobalConversationSummary = {
   conversationID: string;
@@ -332,6 +333,8 @@ export type CodexConversationSummary = {
   title?: string;
   providerSessionId?: string;
   providerPermissionState?: string;
+  runtimeBinding?: string;
+  runtimeGeneration?: string;
   scopedConversationKey?: string;
   scopeType?: string;
   scopeId?: string;

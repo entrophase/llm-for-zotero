@@ -22117,3 +22117,25 @@ item-pane-sidenav .llm-persistent-rail-entry[hidden] {
   background: color-mix(in srgb, var(--llm-diff-add-fg) 24%, transparent);
   color: inherit;
 }
+
+.llm-runtime-system-toggle--dsh[data-active="true"] {
+  color: #4d6bfe;
+}
+
+.llm-runtime-system-toggle-icon--dsh {
+  background-color: currentColor;
+  mask-image: url("icons/dsh.svg");
+  mask-repeat: no-repeat;
+  mask-position: center;
+  mask-size: contain;
+  -webkit-mask-image: url("icons/dsh.svg");
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  -webkit-mask-size: contain;
+  opacity: 0.62;
+}
+
+.llm-runtime-system-toggle--dsh[data-active="true"]
+  .llm-runtime-system-toggle-icon--dsh {
+  opacity: 1;
+}

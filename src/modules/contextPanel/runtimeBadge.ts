@@ -12,6 +12,7 @@ export type RuntimeBadgeStateInput = {
   codexEnabled: boolean;
   claudeEnabled: boolean;
   antigravityEnabled?: boolean;
+  dshEnabled?: boolean;
   isWebChat: boolean;
   /** The window's temporary side chat: the built-in runtime only. */
   isSideChat: boolean;
@@ -40,6 +41,7 @@ export function getRuntimeBadgeLabel(
 ): string {
   if (system === "codex") return "Codex";
   if (system === "claude_code") return "Claude";
+  if (system === "dsh") return "DSH";
   if (system === "antigravity") return "Antigravity";
   return agentEnabled ? "Agent" : "Chat";
 }
@@ -61,6 +63,9 @@ export function resolveRuntimeBadgeState(
     if (input.claudeEnabled) {
       items.push({ system: "claude_code", label: "Claude" });
     }
+    if (input.dshEnabled) {
+      items.push({ system: "dsh", label: "DSH" });
+    }
     if (input.antigravityEnabled) {
       items.push({ system: "antigravity", label: "Antigravity" });
     }
@@ -72,6 +77,7 @@ export function resolveRuntimeBadgeState(
     input.codexEnabled ||
     input.claudeEnabled ||
     Boolean(input.antigravityEnabled) ||
+    Boolean(input.dshEnabled) ||
     input.system !== "upstream";
   const visible = !input.isWebChat && anyRuntimeOn;
   return {

@@ -195,6 +195,111 @@ describe("Zotero MCP server", function () {
     }
     assert.equal((await call())[0], 401);
   });
+  it("requires Zotero review for DSH writes and revokes its turn credential", async function () {
+    const registry = new AgentToolRegistry(
+      new ActionContractService({ getItem: () => null } as never),
+    );
+    let writes = 0;
+    let reviews = 0;
+    let approved = false;
+    const tool = createWriteTool("note_write");
+    tool.execute = async (_input, context) => {
+      assert.equal(context.executionAuthority, "user");
+      writes++;
+      return { content: { applied: true }, effect: "applied" };
+    };
+    registry.register(tool);
+    registerMcpServer({ toolRegistry: registry, zoteroGateway: {} as never });
+    const scope = registerScopedZoteroMcpScope({
+      runtimeAuthority: "dsh",
+      conversationKey: 7041,
+      runId: "dsh-approval-fixture",
+      libraryID: 1,
+      kind: "global",
+      requestInteraction: async () => {
+        assert.equal(writes, 0);
+        reviews++;
+        return { approved };
+      },
+    });
+    const body = {
+      jsonrpc: "2.0",
+      id: 7041,
+      method: "tools/call",
+      params: { name: "note_write", arguments: { libraryID: 1 } },
+    };
+    const call = () =>
+      invokeMcpEndpoint({
+        token: scope.token,
+        headers: { [ZOTERO_MCP_SCOPE_HEADER]: scope.token },
+        body,
+      });
+    try {
+      assert.equal(
+        (await invokeMcpEndpoint({ token: scope.token, body }))[0],
+        401,
+      );
+      const rejected = JSON.parse((await call())[2]);
+      assert.isTrue(rejected.result.isError);
+      assert.equal(writes, 0);
+      approved = true;
+      const applied = JSON.parse((await call())[2]);
+      assert.isUndefined(applied.result.isError, JSON.stringify(applied));
+      assert.equal(reviews, 2);
+      assert.equal(writes, 1);
+    } finally {
+      scope.clear();
+    }
+    assert.equal((await call())[0], 401);
+  });
+
+  it("refuses a DSH write when its credential is revoked while approval is open", async function () {
+    const registry = new AgentToolRegistry(
+      new ActionContractService({ getItem: () => null } as never),
+    );
+    let writes = 0;
+    let approve: ((value: { approved: boolean }) => void) | undefined;
+    const tool = createWriteTool("note_write");
+    tool.execute = async () => {
+      writes++;
+      return { content: { applied: true }, effect: "applied" };
+    };
+    registry.register(tool);
+    registerMcpServer({ toolRegistry: registry, zoteroGateway: {} as never });
+    const scope = registerScopedZoteroMcpScope({
+      runtimeAuthority: "dsh",
+      conversationKey: 1e15 + 999,
+      libraryID: 1,
+      kind: "global",
+      requestInteraction: () =>
+        new Promise((resolve) => {
+          approve = resolve;
+        }),
+    });
+    const result = invokeMcpEndpoint({
+      token: scope.token,
+      headers: { [ZOTERO_MCP_SCOPE_HEADER]: scope.token },
+      body: {
+        jsonrpc: "2.0",
+        id: 72,
+        method: "tools/call",
+        params: { name: "note_write", arguments: { libraryID: 1 } },
+      },
+    });
+    try {
+      while (!approve) await new Promise((resolve) => setTimeout(resolve, 0));
+      scope.clear();
+      approve({ approved: true });
+      const reply = JSON.parse((await result)[2]);
+      assert.isTrue(
+        Boolean(reply.error || reply.result?.isError),
+        JSON.stringify(reply),
+      );
+      assert.equal(writes, 0);
+    } finally {
+      scope.clear();
+    }
+  });
 
   it("exposes only the owning live scope revision to host finalization", function () {
     const old = registerScopedZoteroMcpScope(

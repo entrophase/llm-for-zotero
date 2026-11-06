@@ -33,6 +33,7 @@ import { initUsageStore } from "./utils/usageStore";
 import { initClaudeCodeStore } from "./claudeCode/store";
 import { initCodexAppServerStore } from "./codexAppServer/store";
 import { initAntigravityStore } from "./antigravity/store";
+import { initDshStore } from "./dsh/store";
 import { pendingDeletionStore } from "./core/conversations/pendingDeletionStore";
 import {
   configurePendingDeletionSubsystem,
@@ -67,6 +68,7 @@ type ConversationStoreReadiness = {
   claudeStoreReady: boolean;
   codexStoreReady: boolean;
   antigravityStoreReady: boolean;
+  dshStoreReady: boolean;
   pendingDeletionReady: boolean;
 };
 
@@ -161,6 +163,7 @@ async function initializeConversationStoresForStartup(): Promise<ConversationSto
     claudeStoreReady: false,
     codexStoreReady: false,
     antigravityStoreReady: false,
+    dshStoreReady: false,
     pendingDeletionReady: false,
   };
 
@@ -201,6 +204,13 @@ async function initializeConversationStoresForStartup(): Promise<ConversationSto
     readiness.antigravityStoreReady = true;
   } catch (err) {
     appLogger.warn("LLM: Failed to initialize Antigravity store", err);
+  }
+  if (startupLifecycle.isStopped()) return readiness;
+  try {
+    await measureStartupPhase("DSH store", initDshStore);
+    readiness.dshStoreReady = true;
+  } catch (err) {
+    appLogger.warn("LLM: Failed to initialize DSH store", err);
   }
   try {
     await measureStartupPhase("pending deletion store", async () => {
@@ -247,6 +257,7 @@ function allConversationStoresReady(
     readiness.claudeStoreReady &&
     readiness.codexStoreReady &&
     readiness.antigravityStoreReady &&
+    readiness.dshStoreReady &&
     readiness.pendingDeletionReady
   );
 }
@@ -779,6 +790,8 @@ async function onShutdown(reason: PluginLifecycleReason = {}): Promise<void> {
 }
 
 async function shutdownPlugin(reason: PluginLifecycleReason): Promise<void> {
+  const { shutdownDshProcesses } = require("./dsh/process");
+  shutdownDshProcesses();
   // An unfinished startup stops at its next check. A step stuck in a database
   // call may outlive teardown; the sequence then undoes what that step
   // registered (cleanUpStoppedStartup) and registers nothing more.

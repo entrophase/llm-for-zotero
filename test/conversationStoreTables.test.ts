@@ -46,6 +46,12 @@ describe("conversation store tables", function () {
           global: "llm_for_zotero_antigravity_conversations",
           paper: "llm_for_zotero_antigravity_conversations",
         },
+        {
+          system: "dsh",
+          messageTable: "llm_for_zotero_dsh_messages",
+          global: "llm_for_zotero_dsh_conversations",
+          paper: "llm_for_zotero_dsh_conversations",
+        },
       ],
     );
   });
@@ -82,12 +88,19 @@ describe("conversation store tables", function () {
         messageTable: "llm_for_zotero_antigravity_messages",
         kind: null,
       },
+      {
+        system: "dsh",
+        catalogTable: "llm_for_zotero_dsh_conversations",
+        messageTable: "llm_for_zotero_dsh_messages",
+        kind: null,
+      },
     ]);
     assert.deepEqual(CONVERSATION_MESSAGE_TABLES, [
       "llm_for_zotero_chat_messages",
       "llm_for_zotero_claude_messages",
       "llm_for_zotero_codex_messages",
       "llm_for_zotero_antigravity_messages",
+      "llm_for_zotero_dsh_messages",
     ]);
     assert.deepEqual(
       getConversationCatalogTables("upstream").map((c) => c.catalogTable),

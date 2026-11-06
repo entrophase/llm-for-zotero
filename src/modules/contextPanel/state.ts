@@ -1,3 +1,4 @@
+import { cancelDshConversation } from "../../dsh/lifecycle";
 import type {
   Message,
   ReasoningProviderKind,
@@ -370,6 +371,7 @@ export function clearConversationOwnedRuntimeState(
   const key = normalizeConversationKey(conversationKey);
   if (!key) return;
 
+  cancelDshConversation(key);
   bumpConversationWriteGeneration(key);
 
   chatHistory.delete(key);

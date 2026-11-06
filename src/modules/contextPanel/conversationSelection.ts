@@ -82,12 +82,30 @@ import {
   setLastUsedAntigravityPaperConversationKey,
 } from "../../antigravity/prefs";
 import {
+  getLastUsedDshConversationMode,
+  getLastUsedDshGlobalConversationKey,
+  getLastUsedDshPaperConversationKey,
+  removeLastUsedDshConversationMode,
+  removeLastUsedDshGlobalConversationKey,
+  removeLastUsedDshPaperConversationKey,
+  setLastUsedDshConversationMode,
+  setLastUsedDshGlobalConversationKey,
+  setLastUsedDshPaperConversationKey,
+} from "../../dsh/prefs";
+import {
   activeAntigravityConversationModeByLibrary,
   activeAntigravityGlobalConversationByLibrary,
   activeAntigravityPaperConversationByPaper,
   buildAntigravityLibraryStateKey,
   buildAntigravityPaperStateKey,
 } from "../../antigravity/state";
+import {
+  activeDshConversationModeByLibrary,
+  activeDshGlobalConversationByLibrary,
+  activeDshPaperConversationByPaper,
+  buildDshLibraryStateKey,
+  buildDshPaperStateKey,
+} from "../../dsh/state";
 import {
   activeConversationModeByLibrary,
   activeGlobalConversationByLibrary,
@@ -316,6 +334,35 @@ const ADAPTERS: Record<ConversationSystem, SelectionAdapter> = {
     getPaper: getLastUsedAntigravityPaperConversationKey,
     setPaper: setLastUsedAntigravityPaperConversationKey,
     removePaper: removeLastUsedAntigravityPaperConversationKey,
+  },
+  dsh: {
+    system: "dsh",
+    libraryStateKey: buildDshLibraryStateKey,
+    paperStateKey: buildDshPaperStateKey,
+    modeSlot: (libraryID) =>
+      slot(
+        activeDshConversationModeByLibrary,
+        buildDshLibraryStateKey(libraryID),
+      ),
+    globalSlot: (libraryID) =>
+      slot(
+        activeDshGlobalConversationByLibrary,
+        buildDshLibraryStateKey(libraryID),
+      ),
+    paperSlot: (libraryID, paperItemID) =>
+      slot(
+        activeDshPaperConversationByPaper,
+        buildDshPaperStateKey(libraryID, paperItemID),
+      ),
+    getMode: getLastUsedDshConversationMode,
+    setMode: setLastUsedDshConversationMode,
+    removeMode: removeLastUsedDshConversationMode,
+    getGlobal: getLastUsedDshGlobalConversationKey,
+    setGlobal: setLastUsedDshGlobalConversationKey,
+    removeGlobal: removeLastUsedDshGlobalConversationKey,
+    getPaper: getLastUsedDshPaperConversationKey,
+    setPaper: setLastUsedDshPaperConversationKey,
+    removePaper: removeLastUsedDshPaperConversationKey,
   },
 };
 

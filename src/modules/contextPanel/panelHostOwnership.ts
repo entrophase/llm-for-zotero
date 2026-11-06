@@ -356,7 +356,8 @@ function resolveMountedScope(body: Element): ConversationScopeIdentity | null {
     system:
       root.dataset.conversationSystem === "claude_code" ||
       root.dataset.conversationSystem === "codex" ||
-      root.dataset.conversationSystem === "antigravity"
+      root.dataset.conversationSystem === "antigravity" ||
+      root.dataset.conversationSystem === "dsh"
         ? root.dataset.conversationSystem
         : "upstream",
     conversationKey,

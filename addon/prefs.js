@@ -123,3 +123,14 @@ pref("libraryTextIndexEnabled", true);
 pref("libraryTextIndexVectors", false);
 pref("libraryTextIndexBudgetMB", 500);
 pref("lastSeenVersion", "");
+
+// Official DSH ACP; authentication and provider configuration remain in DSH.
+pref("enableDshMode", false);
+pref("dshPath", "");
+pref("dshNodePath", "");
+pref("dshHome", "");
+pref("dshModel", "");
+pref("dshEffort", "auto");
+pref("dshConversationModeMap", "");
+pref("dshGlobalConversationMap", "");
+pref("dshLastAllocatedConversationKeyMap", "");

@@ -55,6 +55,24 @@ import {
   touchAntigravityConversationTitle,
   upsertAntigravityConversationSummary,
 } from "../../antigravity/store";
+import {
+  createDshGlobalConversation,
+  createDshPaperConversation,
+  deleteDshConversationLocalRows,
+  deleteDshConversation,
+  deleteDshTurnMessages,
+  ensureDshGlobalConversation,
+  ensureDshPaperConversation,
+  getDshConversationSummary,
+  loadDshConversation,
+  listAllDshPaperConversationsByLibrary,
+  listDshGlobalConversations,
+  listDshPaperConversations,
+  preflightDeleteDshConversationLocalRows,
+  setDshConversationTitle,
+  touchDshConversationTitle,
+  upsertDshConversationSummary,
+} from "../../dsh/store";
 import { isConversationKeyForKind } from "../../shared/conversationKeySpace";
 import {
   canMigrateLegacyAmbiguousPaperRegistryScope,
@@ -393,9 +411,14 @@ function fromAntigravitySummary(
 ): ConversationCatalogEntry | null {
   return fromClaudeShapedSummary("antigravity", summary);
 }
+function fromDshSummary(
+  summary: ClaudeConversationSummary | null | undefined,
+): ConversationCatalogEntry | null {
+  return fromClaudeShapedSummary("dsh", summary);
+}
 
 function fromClaudeShapedSummary(
-  system: "claude_code" | "antigravity",
+  system: "claude_code" | "antigravity" | "dsh",
   summary: ClaudeConversationSummary | null | undefined,
 ): ConversationCatalogEntry | null {
   if (!summary) return null;
@@ -1194,6 +1217,30 @@ const ANTIGRAVITY_STORE = createRuntimeStoreAdapter(
   },
   {},
 );
+const DSH_STORE = createRuntimeStoreAdapter(
+  {
+    system: "dsh",
+    fromSummary: fromDshSummary,
+    getSummary: getDshConversationSummary,
+    loadConversation: loadDshConversation,
+    deleteTurnMessages: deleteDshTurnMessages,
+    ensureGlobalConversation: ensureDshGlobalConversation,
+    ensurePaperConversation: ensureDshPaperConversation,
+    createGlobalConversation: createDshGlobalConversation,
+    createPaperConversation: createDshPaperConversation,
+    listGlobalConversations: listDshGlobalConversations,
+    listPaperConversations: listDshPaperConversations,
+    listAllPaperConversationsByLibrary: listAllDshPaperConversationsByLibrary,
+    setConversationTitle: setDshConversationTitle,
+    touchConversationTitle: touchDshConversationTitle,
+    upsertSummary: upsertDshConversationSummary,
+    deleteConversation: deleteDshConversation,
+    deleteConversationLocalRows: deleteDshConversationLocalRows,
+    preflightDeleteConversationLocalRows:
+      preflightDeleteDshConversationLocalRows,
+  },
+  {},
+);
 
 /**
  * The conversation stores, by system.  A value that names no runtime store
@@ -1205,12 +1252,14 @@ const STORES: Readonly<
   claude_code: CLAUDE_CODE_STORE,
   codex: CODEX_STORE,
   antigravity: ANTIGRAVITY_STORE,
+  dsh: DSH_STORE,
 };
 
 function storeFor(system: ConversationSystem): ConversationStoreAdapter {
   return system === "claude_code" ||
     system === "codex" ||
-    system === "antigravity"
+    system === "antigravity" ||
+    system === "dsh"
     ? STORES[system]
     : UPSTREAM_STORE;
 }

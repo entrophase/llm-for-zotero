@@ -31,6 +31,7 @@ export type PaperRestoreRuntimeReadiness = {
   claudeStoreReady: boolean;
   codexStoreReady: boolean;
   antigravityStoreReady?: boolean;
+  dshStoreReady?: boolean;
 };
 
 type RestoreEntry = {
@@ -84,6 +85,13 @@ const RUNTIME_CONFIG: Record<
     preference: "antigravityPaperConversationMap",
     migrationID: "paper-restore-selection-v1:antigravity",
     description: "Move Antigravity paper restore selections from preferences",
+  },
+  dsh: {
+    // Dsh never stored restore selections in preferences; the
+    // migration only marks the (empty) move as applied.
+    preference: "dshPaperConversationMap",
+    migrationID: "paper-restore-selection-v1:dsh",
+    description: "Move Dsh paper restore selections from preferences",
   },
 };
 
@@ -566,6 +574,7 @@ export async function initializePaperRestoreSelections(
   if (readiness.chatStoreReady) readySystems.push("upstream");
   if (readiness.claudeStoreReady) readySystems.push("claude_code");
   if (readiness.codexStoreReady) readySystems.push("codex");
+  if (readiness.dshStoreReady) readySystems.push("dsh");
   if (readiness.antigravityStoreReady) readySystems.push("antigravity");
   for (const [key] of stagedStartupCandidates) {
     const system = key.split(":")[1] as ConversationSystem | undefined;
