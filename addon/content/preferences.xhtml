@@ -1768,20 +1768,14 @@
                         class="llm-pref-select"
                       >
                         <html:option value="default">
-                          Ask (actions that need approval are skipped)
+                          Review Zotero changes
                         </html:option>
                         <html:option value="plan"
                           >Plan only (read-only)</html:option
                         >
-                        <html:option value="full">
-                          Allow every action
-                        </html:option>
                       </html:select>
                       <html:span class="llm-pref-hint">
-                        Messages run without a terminal, so agy cannot ask you.
-                        Allow every action passes
-                        <html:code>--dangerously-skip-permissions</html:code>;
-                        use it only if you trust what you ask for.
+                        Zotero asks before the agent applies a library change.
                       </html:span>
                     </html:div>
                   </html:div>
@@ -2624,10 +2618,9 @@
               hidden="hidden"
             >
               <html:span class="llm-pref-hint">
-                The proxy used by Codex and Antigravity, which run as programs
-                on this computer. Model APIs called with an API key follow
-                Zotero's own network settings, and the Claude Code bridge uses
-                the environment it was started in.
+                The proxy used by the local Antigravity CLI. Model APIs called
+                with an API key follow Zotero's own network settings, and the
+                Claude Code bridge uses the environment it was started in.
               </html:span>
               <html:div class="llm-pref-field">
                 <html:label for="__addonRef__-cli-proxy-mode">Proxy</html:label>

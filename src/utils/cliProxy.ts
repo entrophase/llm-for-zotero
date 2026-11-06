@@ -1,15 +1,10 @@
 import { config } from "../../package.json";
 
 /**
- * The network proxy handed to the command-line runtimes the plugin starts
- * (Codex and Antigravity). It only shapes the environment of those child
- * processes: requests Zotero sends itself follow Zotero's own network
- * settings, and the Claude Code bridge runs with whatever environment it was
- * started in.
+ * The proxy for the local Antigravity CLI, passed in its child environment.
  *
- * - "system": each CLI keeps its usual behaviour. Codex reads the macOS
- *   system proxy itself; agy (Go) cannot, so it is given `scutil --proxy`.
- * - "manual": every CLI uses the proxy typed in Settings.
+ * - "system": inherit proxy variables or resolve the OS proxy.
+ * - "manual": use the proxy from Settings.
  * - "none": proxy variables are cleared and NO_PROXY=* makes each CLI
  *   connect directly, the system proxy included.
  */

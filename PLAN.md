@@ -8,24 +8,24 @@
 
 已阅读 README、面板架构说明、Claude Bridge 开发说明、构建配置和相关测试；官方快照中未发现 `AGENTS.md` 或独立 `CONTRIBUTING` 文件。现有规范要求保持公共接口、DOM 标识、持久化结构稳定，并遵守架构分层检查。
 
-| 后端 | 完整调用链与生命周期 |
-|---|---|
-| Codex App Server | 面板发送/重试 → 公共上下文准备 → `runCodexNativePanelTurn` → `runCodexAppServerNativeTurn` → Gecko `Subprocess` 启动本地 `codex app-server` → stdin/stdout JSON-RPC。通过 `thread/start`、`thread/resume`、`turn/start` 管理会话，通知回流为文本、工具活动和用量；取消使用 `turn/interrupt`。 |
-| Claude Code | 面板 Agent 调度 → `getClaudeBridgeRuntime` → `externalBackendBridge` → 本地受令牌保护的 HTTP `/run-turn` → 插件管理的 Node Bridge → Runtime Adapter → Claude Agent SDK `query()` → 本地 Claude Code。流式事件回传面板；SDK 权限请求经确认事件和 `/resolve-confirmation` 应答；会话映射、轨迹及热运行时由 Bridge 管理。 |
-| 两者的 Zotero 工具 | 外部运行时 → 带 Bearer 和会话作用域头的本地 MCP → `AgentToolRegistry` → 参数校验、操作准备、授权、执行及变更日志 → Zotero Gateway。工具结果中的引用证据和操作回执回流至面板。 |
+| 后端               | 完整调用链与生命周期                                                                                                                                                                                                                                                                                                   |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Codex App Server   | 面板发送/重试 → 公共上下文准备 → `runCodexNativePanelTurn` → `runCodexAppServerNativeTurn` → Gecko `Subprocess` 启动本地 `codex app-server` → stdin/stdout JSON-RPC。通过 `thread/start`、`thread/resume`、`turn/start` 管理会话，通知回流为文本、工具活动和用量；取消使用 `turn/interrupt`。                          |
+| Claude Code        | 面板 Agent 调度 → `getClaudeBridgeRuntime` → `externalBackendBridge` → 本地受令牌保护的 HTTP `/run-turn` → 插件管理的 Node Bridge → Runtime Adapter → Claude Agent SDK `query()` → 本地 Claude Code。流式事件回传面板；SDK 权限请求经确认事件和 `/resolve-confirmation` 应答；会话映射、轨迹及热运行时由 Bridge 管理。 |
+| 两者的 Zotero 工具 | 外部运行时 → 带 Bearer 和会话作用域头的本地 MCP → `AgentToolRegistry` → 参数校验、操作准备、授权、执行及变更日志 → Zotero Gateway。工具结果中的引用证据和操作回执回流至面板。                                                                                                                                          |
 
 因此，Antigravity 可以直接复用 Gecko 子进程能力和现有 MCP，无需再增加 Node Bridge。[Codex 源码](https://github.com/yilewang/llm-for-zotero/blob/9c2641c503623dd154166cc042308629e4120b7d/src/codexAppServer/nativeClient.ts)、[Claude Bridge 说明](https://github.com/yilewang/llm-for-zotero/blob/9c2641c503623dd154166cc042308629e4120b7d/packages/claude-bridge/README.md)、[MCP 源码](https://github.com/yilewang/llm-for-zotero/blob/9c2641c503623dd154166cc042308629e4120b7d/src/agent/mcp/server.ts)。
 
 ## 2. 两个 PR 的实现范围与兼容性
 
-| 项目 | 已核实结果 |
-|---|---|
+| 项目                                                           | 已核实结果                                                                                                                                                                |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [PR #522](https://github.com/yilewang/llm-for-zotero/pull/522) | 10 个提交、75 个文件，新增独立会话系统、存储表、历史菜单、模型发现、流式解析、取消、长上下文临时文件和 CLI 工具活动展示。每轮启动一个 `agy`，通过 `--conversation` 续接。 |
-| Zotero 工具调用 | Antigravity 运行时没有注册 Zotero MCP 作用域，也没有配置 MCP 服务或接入宿主交互通道。活动轨迹来自 `agy` 自身的工具事件，尚未形成 Zotero 工具执行闭环。 |
-| PDF 与引用 | 已复用公共提示词上下文，可传递提取后的 PDF 文本等内容；Zotero 工具读取、引用证据回流及点击定位仍需接线和验证。 |
-| [PR #521](https://github.com/yilewang/llm-for-zotero/pull/521) | 包含 #522 的全部提交，最后仅追加 `59159904`：配额显示和 CLI 代理设置。相对 #522 修改 20 个文件。实施时只移植其追加提交。 |
-| 合并冲突 | 模拟合并 #522 与当前 main，出现 6 个文件冲突，集中在聊天调度、会话创建、历史控制、独立窗口及系统选择。#521 还增加偏好设置界面和布局测试冲突，共 8 个文件。 |
-| 远端验证 | 两个 PR 的 CI 均为 `action_required`，不能视为通过。作者描述中的测试结果尚未在本机复现。 |
+| Zotero 工具调用                                                | Antigravity 运行时没有注册 Zotero MCP 作用域，也没有配置 MCP 服务或接入宿主交互通道。活动轨迹来自 `agy` 自身的工具事件，尚未形成 Zotero 工具执行闭环。                    |
+| PDF 与引用                                                     | 已复用公共提示词上下文，可传递提取后的 PDF 文本等内容；Zotero 工具读取、引用证据回流及点击定位仍需接线和验证。                                                            |
+| [PR #521](https://github.com/yilewang/llm-for-zotero/pull/521) | 包含 #522 的全部提交，最后仅追加 `59159904`：配额显示和 CLI 代理设置。相对 #522 修改 20 个文件。实施时只移植其追加提交。                                                  |
+| 合并冲突                                                       | 模拟合并 #522 与当前 main，出现 6 个文件冲突，集中在聊天调度、会话创建、历史控制、独立窗口及系统选择。#521 还增加偏好设置界面和布局测试冲突，共 8 个文件。                |
+| 远端验证                                                       | 两个 PR 的 CI 均为 `action_required`，不能视为通过。作者描述中的测试结果尚未在本机复现。                                                                                  |
 
 移植前需要修正的具体问题：
 
@@ -74,16 +74,16 @@
 
 以下均针对未修改的官方 main：
 
-| 检查 | 结果 |
-|---|---|
-| 插件与 workflow TypeScript 检查 | 通过 |
-| Claude Bridge TypeScript 检查 | 通过 |
-| Prettier、ESLint | 通过；ESLint 有 3 条既有 warning |
-| 架构边界检查 | 通过；有 12 条类型导入 warning |
-| 循环依赖检查 | 通过 |
-| 选取的 MCP、权限、路径、会话测试 | **138 项通过** |
-| Claude Bridge 全套测试 | **115 通过、12 失败、5 跳过** |
-| Antigravity 真实模型、Zotero UI、XPI | 尚未验证 |
+| 检查                                 | 结果                             |
+| ------------------------------------ | -------------------------------- |
+| 插件与 workflow TypeScript 检查      | 通过                             |
+| Claude Bridge TypeScript 检查        | 通过                             |
+| Prettier、ESLint                     | 通过；ESLint 有 3 条既有 warning |
+| 架构边界检查                         | 通过；有 12 条类型导入 warning   |
+| 循环依赖检查                         | 通过                             |
+| 选取的 MCP、权限、路径、会话测试     | **138 项通过**                   |
+| Claude Bridge 全套测试               | **115 通过、12 失败、5 跳过**    |
+| Antigravity 真实模型、Zotero UI、XPI | 尚未验证                         |
 
 Claude Bridge 失败涉及 Windows 路径处理及模型配置断言，尚未逐项完成定因。本次登记为既有基线，不删除或放宽测试；集成后需逐项比较是否新增失败。
 
@@ -105,20 +105,24 @@ Claude Bridge 失败涉及 Windows 路径处理及模型配置断言，尚未逐
 为确保后续维护、二次开发或切换运行环境时不丢失关键设计思考，本节对核心架构决策进行完整归档：
 
 ### 6.1 为什么采用子进程直连，而不是 Node Bridge？
+
 - **机制差异**：Claude Code 之所以需要 `packages/claude-bridge`，是因为其官方 SDK 设计高度依赖 Node.js 运行时环境与复杂的权限状态机，无法在 Zotero 的 Gecko 扩展沙箱中直接执行。
 - **Antigravity CLI 的优势**：`agy` 是原生自包含的可执行文件，支持以 headless 模式启动并直接通过 `stdin/stdout` 交换 JSON-RPC / NDJSON 流。
 - **决断**：复用 Zotero Gecko 原生提供的 `Subprocess` 模块直接驱动 `agy`，省去了中间层 Node Bridge 的端口占用、进程守护开销以及令牌握手复杂性，响应更加直接且资源消耗更低。
 
 ### 6.2 为什么不使用反向代理模拟 OpenAI / Claude 接口？
+
 - **协议伪装的脆弱性**：反向代理本质上是将标准的 OpenAI/Claude ChatCompletions 格式翻译为 Google 认证的内部请求。这种方案一旦 Google 接口变更、签名算法升级或调整反滥用检测，代理会立即整体瘫痪。
 - **风控与合规风险**：Google 服务条款对第三方自动化包装、模拟登录和绕过界面限制有明确的风控策略，可能面临账号限制。
 - **工具链割裂**：通过反向代理无法直接利用 Zotero 为原生 Agent 准备的 Local MCP 体系，无法获得会话隔离的受控文献读写能力。
 
 ### 6.3 为什么不使用 ACP (Agent Client Protocol)？
+
 - **现状分析**：社区虽有探索 `antigravity-acp` 等适配层，但 `llm-for-zotero` 宿主本身并不是通用的 ACP Client（它分别硬编码了 Codex JSON-RPC 和 Claude Bridge）。
 - **架构考量**：若引入 ACP，插件端需要先实现一套 ACP Client 协议栈，宿主还需要通过中介层去与 `agy` 交互，变成了“三层套娃”。直接集成 CLI 原生 headless 事件流与原生 MCP 是路径最短、最易调试的方案。
 
 ### 6.4 Headless 模式与 Zotero 本地 MCP 的无缝对接
+
 - **挑战**：`agy` 运行在 `--headless` 模式时，无法弹出交互式 TUI 供用户敲回车批准 MCP 权限；如果未授权，请求会直接被 soft-deny 挂起或报错。
 - **解决方案**：
   1. 为每个对话轮次创建临时的独立工作空间（位于临时文件夹中）。
@@ -127,6 +131,7 @@ Claude Bridge 失败涉及 Windows 路径处理及模型配置断言，尚未逐
   4. 最终写操作的审批权完全交回给 Zotero 插件端的 `runtimeAuthority`（宿主级审批），既保证了自动化执行，又严守数据安全边界。
 
 ### 6.5 Windows 平台关键缺陷修复清单
+
 - **路径探测**：增加对 Windows 默认安装目录 `%LOCALAPPDATA%\agy\bin\agy.exe` 的自动探测。
 - **环境变量容错**：Windows PowerShell / CMD 下环境变量大小写混用，统一兼顾 `PATH` 与 `Path`。
 - **系统代理穿透**：通过 Windows 注册表 `HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings` 读取 `ProxyServer` 与 `ProxyEnable`，完美支持 Clash / v2ray 等常见代理客户端。
@@ -134,6 +139,7 @@ Claude Bridge 失败涉及 Windows 路径处理及模型配置断言，尚未逐
 - **会话持久化时机**：在收到首个 `init` 事件时立即保存 `conversationId`，避免会话异常中断导致后续无法续接对话。
 
 ### 6.6 上游更新与分支维护建议
+
 - **分支策略**：
   - `main`：保持为可以直接使用、编译出稳定 XPI 的主分支。
   - `codex/antigravity-agy-integration`：保留 Antigravity CLI 集成的全套功能实现与测试。
@@ -146,4 +152,3 @@ Claude Bridge 失败涉及 Windows 路径处理及模型配置断言，尚未逐
   git merge upstream/main  # 或 rebase upstream/main
   # 解决潜在的合并冲突，重新运行 npm test 验证无误后打 tag 发布
   ```
-

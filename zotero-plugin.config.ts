@@ -33,9 +33,8 @@ export default defineConfig({
   name: pkg.config.addonName,
   id: pkg.config.addonID,
   namespace: pkg.config.addonRef,
-  updateURL: `https://github.com/{{owner}}/{{repo}}/releases/download/release/${
-    pkg.version.includes("-") ? "update-beta.json" : "update.json"
-  }`,
+  updateURL:
+    "https://github.com/{{owner}}/{{repo}}/releases/latest/download/update.json",
   xpiDownloadLink:
     "https://github.com/{{owner}}/{{repo}}/releases/download/v{{version}}/{{xpiName}}.xpi",
 
@@ -122,6 +121,10 @@ export default defineConfig({
       "layout.throttled_frame_rate": 60,
       "dom.min_background_timeout_value": 4,
       "dom.timeout.enable_budget_timer_throttling": false,
+      // A test Zotero must not download and stage an app update: the next
+      // quit would replace the Zotero the tests are pinned to.
+      "app.update.auto": false,
+      "app.update.enabled": false,
     },
     entries:
       process.env.LLM_FOR_ZOTERO_TEST_ENTRIES ||

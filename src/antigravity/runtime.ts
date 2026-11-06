@@ -30,8 +30,15 @@ import {
 import {
   registerScopedZoteroMcpScope,
   getZoteroMcpServerUrl,
-  getOrCreateZoteroMcpBearerToken,
+  addZoteroMcpToolActivityObserver,
+  type ZoteroMcpToolActivityEvent,
 } from "../agent/mcp/server";
+import type {
+  AgentPendingAction,
+  AgentConfirmationResolution,
+  AgentRuntimeRequest,
+} from "../agent/types";
+import { createJournalId } from "../agent/store/changeJournal";
 import type { TurnPaperScope } from "../agent/context/turnPaperScope";
 import type { AttachedConversationRef } from "../shared/types";
 
@@ -72,6 +79,7 @@ export type AntigravityPanelTurn = {
   paperItemID?: number;
   activeItemId?: number;
   turnPaperScope?: TurnPaperScope;
+  executionRequest?: AgentRuntimeRequest;
   attachedConversationScope?: AttachedConversationRef[];
 };
 
@@ -90,6 +98,10 @@ export type AntigravityPanelCallbacks = {
   onStatus: (text: string) => void;
   onUsage?: (usage: UsageStats) => void;
   onActivity?: (activity: AntigravityActivity) => void;
+  onMcpActivity?: (event: ZoteroMcpToolActivityEvent) => void;
+  onHostInteraction?: (
+    action: AgentPendingAction,
+  ) => Promise<AgentConfirmationResolution>;
 };
 
 /** A step's state once it stopped running: done, or failed some way. */
@@ -145,7 +157,6 @@ async function prepareAgySessionWorkspace(params: {
   conversationKey: number;
   scopeToken: string;
   mcpServerUrl: string;
-  mcpBearerToken: string;
 }): Promise<AgySessionWorkspace | null> {
   const temp = (
     globalThis as { Zotero?: { getTempDirectory?: () => { path?: string } } }
@@ -164,13 +175,13 @@ async function prepareAgySessionWorkspace(params: {
 
     const mcpConfig = {
       mcpServers: {
-        zotero: {
+        llm_for_zotero_antigravity: {
           url: params.mcpServerUrl,
           headers: {
-            Authorization: `Bearer ${params.mcpBearerToken}`,
+            Authorization: `Bearer ${params.scopeToken}`,
             "X-LLM-For-Zotero-Scope": params.scopeToken,
           },
-          timeout: 600,
+          timeoutSeconds: 600,
         },
       },
     };
@@ -184,7 +195,7 @@ async function prepareAgySessionWorkspace(params: {
 
     const settings = {
       permissions: {
-        allow: ["mcp(zotero/*)"],
+        allow: ["mcp(llm_for_zotero_antigravity/*)"],
       },
     };
     const settingsBytes = new TextEncoder().encode(
@@ -258,12 +269,10 @@ export type AntigravityTurnDeps = {
   };
   registerMcpScope?: typeof registerScopedZoteroMcpScope;
   getMcpServerUrl?: typeof getZoteroMcpServerUrl;
-  getMcpBearerToken?: typeof getOrCreateZoteroMcpBearerToken;
   prepareWorkspace?: (params: {
     conversationKey: number;
     scopeToken: string;
     mcpServerUrl: string;
-    mcpBearerToken: string;
   }) => Promise<AgySessionWorkspace | null>;
   removeWorkspace?: (workspace: AgySessionWorkspace) => Promise<void>;
 };
@@ -286,7 +295,6 @@ const DEFAULT_TURN_DEPS: AntigravityTurnDeps = {
   }),
   registerMcpScope: registerScopedZoteroMcpScope,
   getMcpServerUrl: getZoteroMcpServerUrl,
-  getMcpBearerToken: getOrCreateZoteroMcpBearerToken,
   prepareWorkspace: prepareAgySessionWorkspace,
   removeWorkspace: (workspace) => removePathQuietly(workspace.dir),
 };
@@ -341,26 +349,40 @@ export async function runAntigravityPanelTurn(
 
   let scopedMcp: ReturnType<typeof registerScopedZoteroMcpScope> | null = null;
   let workspace: AgySessionWorkspace | null = null;
+  const runId = createJournalId("agy");
+  const execution = turn.executionRequest;
+  const clearMcp = () => scopedMcp?.clear();
   if (deps.registerMcpScope && deps.prepareWorkspace) {
     try {
       scopedMcp = deps.registerMcpScope({
         runtimeAuthority: "antigravity",
         conversationKey: turn.conversationKey,
-        libraryID: turn.libraryID,
+        runId,
+        libraryID: execution?.libraryID ?? turn.libraryID,
+        kind: execution?.conversationKind,
         paperItemID: turn.paperItemID,
-        activeItemId: turn.activeItemId,
-        turnPaperScope: turn.turnPaperScope,
-        attachedConversationScope: turn.attachedConversationScope,
-        signal: turn.signal,
+        activeItemId: execution?.activeItemId ?? turn.activeItemId,
+        activeNoteId: execution?.activeNoteContext?.noteId,
+        conversationGeneration: execution?.conversationGeneration,
+        executionContext: execution?.executionContext,
+        userText: execution?.userText,
+        turnPaperScope: execution?.turnPaperScope ?? turn.turnPaperScope,
+        attachedConversationScope:
+          execution?.attachedConversationScope ??
+          turn.attachedConversationScope,
+        requestInteraction:
+          settings.permissionMode === "default"
+            ? panel.onHostInteraction
+            : undefined,
       });
+      turn.signal?.addEventListener("abort", clearMcp, { once: true });
+      if (turn.signal?.aborted) clearMcp();
       const mcpServerUrl = deps.getMcpServerUrl?.() || "";
-      const mcpBearerToken = deps.getMcpBearerToken?.() || "";
-      if (scopedMcp.token && mcpServerUrl && mcpBearerToken) {
+      if (!turn.signal?.aborted && scopedMcp.token && mcpServerUrl) {
         workspace = await deps.prepareWorkspace({
           conversationKey: turn.conversationKey,
           scopeToken: scopedMcp.token,
           mcpServerUrl,
-          mcpBearerToken,
         });
       }
     } catch {
@@ -378,6 +400,9 @@ export async function runAntigravityPanelTurn(
     addDirs.push(settings.cwd);
   }
 
+  const stopObservingMcp = addZoteroMcpToolActivityObserver((event) => {
+    if (event.runId === runId && panel.isLive()) panel.onMcpActivity?.(event);
+  });
   const result = await deps
     .runTurn({
       binaryPath: settings.binaryPath,
@@ -386,7 +411,6 @@ export async function runAntigravityPanelTurn(
       model: toAntigravityModelPref(turn.model ?? settings.model) || undefined,
       effort: effort === "auto" ? undefined : effort,
       mode: permissionMode === "plan" ? "plan" : undefined,
-      skipPermissions: permissionMode === "full",
       settingsPath: workspace?.settingsPath,
       conversationId: storedConversationId || undefined,
       cwd: workspace?.dir ?? settings.cwd,
@@ -423,6 +447,8 @@ export async function runAntigravityPanelTurn(
       },
     })
     .finally(async () => {
+      stopObservingMcp();
+      turn.signal?.removeEventListener("abort", clearMcp);
       try {
         scopedMcp?.clear();
       } catch {

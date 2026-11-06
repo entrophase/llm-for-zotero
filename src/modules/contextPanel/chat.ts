@@ -1,6 +1,9 @@
 import { appLogger } from "../../core/logging";
 import { noteHtmlToModelText } from "../../services/notes/noteRendering";
-import { runCodexNativePanelTurn } from "./codexNative/turnCallbacks";
+import {
+  resolveCodexNativeHostInteractionWithTrace,
+  runCodexNativePanelTurn,
+} from "./codexNative/turnCallbacks";
 import { getPanelRequestUI, type PanelRequestUI } from "./panelRequestUI";
 import { isLiveDocument, isLivePanelBody } from "./panelLiveness";
 export type { PanelRequestUI } from "./panelRequestUI";
@@ -245,9 +248,11 @@ import {
   type TornSurface,
 } from "./conversationSelection";
 import {
+  getReaderSelectionForSurface,
   getSelectedModelEntryForSurface,
   surfaceChoices,
 } from "./surfaceChoices";
+import { readerRuntimeKeyForSystem } from "../../shared/readerSelection";
 import { renderAssistantGeneratedImagesInto } from "./generatedImageRender";
 export { copyTextToClipboard } from "./clipboard";
 export {
@@ -6789,6 +6794,11 @@ export async function retryLatestAssistantResponse(
     return;
   }
 
+  // A retry streams a new answer into this panel's latest turn; follow it
+  // like a send does.
+  if (ui.chatBox) {
+    setFollowBottomChatScrollSnapshot(conversationKey, ui.chatBox);
+  }
   refreshChatSafely();
   // Local usage ledger for this retry. A retry's tokens are real and are
   // recorded, but the question was already counted when it was first asked.
@@ -7230,19 +7240,20 @@ export async function retryLatestAssistantResponse(
       effectiveRequestConfig,
       llmHistory,
     });
-    const codexExecutionRequest = isCodexNativeTurn
-      ? await initAgentSubsystem().then(async (runtime) =>
-          runtime.prepareExecutionRequest(
-            await buildAgentRuntimeRequest(
-              codexRetryRequestParams(codexRetryRequestSite()),
+    const nativeExecutionRequest =
+      isCodexNativeTurn || isAntigravityTurn
+        ? await initAgentSubsystem().then(async (runtime) =>
+            runtime.prepareExecutionRequest(
+              await buildAgentRuntimeRequest(
+                codexRetryRequestParams(codexRetryRequestSite()),
+              ),
+              {
+                signal: getAbortController(conversationKey)?.signal,
+                permissionOwner: "external_runtime",
+              },
             ),
-            {
-              signal: getAbortController(conversationKey)?.signal,
-              permissionOwner: "external_runtime",
-            },
-          ),
-        )
-      : undefined;
+          )
+        : undefined;
     if (await stopRetryPreparation()) return;
     if (
       !notifyProviderDispatch(
@@ -7267,9 +7278,7 @@ export async function retryLatestAssistantResponse(
             attachedPastChatText: codexPastChatText || undefined,
             reasoning: effectiveRequestConfig.reasoning,
             signal: getAbortController(conversationKey)?.signal,
-            libraryID: item?.libraryID,
-            paperItemID: item?.id,
-            activeItemId: item?.id,
+            executionRequest: nativeExecutionRequest,
             // A retry replaces an answer agy already holds; start over from
             // the transcript the panel shows.
             freshConversation: true,
@@ -7279,6 +7288,27 @@ export async function retryLatestAssistantResponse(
             onDelta: assistantTurn.push,
             onStatus: (text) => setStatusSafely(text, "sending"),
             onUsage: handleUsage,
+            onMcpActivity: (event) => {
+              assistantTurn.codexTrace?.noteMcpToolActivity(event);
+              assistantMessage.quoteCitations = mergeQuoteCitations(
+                assistantMessage.quoteCitations,
+                event.quoteCitations,
+              );
+            },
+            onHostInteraction: (action) =>
+              resolveCodexNativeHostInteractionWithTrace({
+                body,
+                action,
+                trace: assistantTurn.codexTrace,
+                signal: getAbortController(conversationKey)?.signal,
+                isCurrent: () =>
+                  !assistantTurn.wasCancelled() &&
+                  requireCurrentPanelOwnership(
+                    body,
+                    item,
+                    "antigravity-review",
+                  ),
+              }),
             onActivity: (activity) =>
               assistantTurn.codexTrace?.appendRuntimeToolStep(
                 toAntigravityTraceStep(activity),
@@ -7288,7 +7318,7 @@ export async function retryLatestAssistantResponse(
       : isCodexNativeTurn
         ? await runCodexNativePanelTurn(
             {
-              executionRequest: codexExecutionRequest!,
+              executionRequest: nativeExecutionRequest!,
               scope: codexScope!,
               conversationGeneration,
               model: effectiveRequestConfig.model,
@@ -8519,6 +8549,18 @@ async function buildAgentRuntimeRequest(
             | "max")
         : undefined,
     advanced: params.effectiveRequestConfig.advanced,
+    // The reader model picked for this runtime in the composer's model menu.
+    readerSelection:
+      getReaderSelectionForSurface(
+        readerRuntimeKeyForSystem(
+          params.effectiveRequestConfig.authMode === "codex_app_server"
+            ? "codex"
+            : params.effectiveRequestConfig.modelProviderLabel === "Claude Code"
+              ? "claude_code"
+              : "upstream",
+        ),
+        params.surface || resolveSurfaceForMountedItem(params.item),
+      ) || undefined,
     history: params.history,
     item: params.item,
     systemPrompt: getStringPref("systemPrompt") || undefined,
@@ -8854,6 +8896,12 @@ async function retryLatestAgentResponse(
   if (!retryIsActive()) return true;
   await initAgentSubsystem();
   if (!retryIsActive()) return true;
+  // A retry streams a new answer into this panel's latest turn; follow it
+  // like a send does.
+  const retryChatBox = getPanelRequestUI(body).chatBox;
+  if (agentRetryConversationKey && retryChatBox) {
+    setFollowBottomChatScrollSnapshot(agentRetryConversationKey, retryChatBox);
+  }
   await retryAgentTurn(
     body,
     item,
@@ -9226,6 +9274,12 @@ export async function sendQuestion(
   };
   if (!reuseAgentFallbackPlaceholder) {
     provisionalHistory.push(optimisticUserMessage, optimisticAssistantMessage);
+    // A send moves this panel to the new turn; a panel left in manual mode
+    // would otherwise draw it below the fold. Other surfaces keep their own
+    // position, and the reader can still scroll away while the answer streams.
+    if (ui.chatBox) {
+      setFollowBottomChatScrollSnapshot(provisionalConversationKey, ui.chatBox);
+    }
   }
   const optimisticHelpers = createPanelUpdateHelpers(
     body,
@@ -10178,17 +10232,18 @@ export async function sendQuestion(
       effectiveRequestConfig,
       llmHistory,
     });
-    const codexExecutionRequest = isCodexNativeTurn
-      ? await initAgentSubsystem().then(async (runtime) => {
-          const planRequest = await buildAgentRuntimeRequest(
-            codexSendRequestParams(codexSendRequestSite()),
-          );
-          return runtime.prepareExecutionRequest(planRequest, {
-            signal: getAbortController(conversationKey)?.signal,
-            permissionOwner: "external_runtime",
-          });
-        })
-      : undefined;
+    const nativeExecutionRequest =
+      isCodexNativeTurn || isAntigravityTurn
+        ? await initAgentSubsystem().then(async (runtime) => {
+            const planRequest = await buildAgentRuntimeRequest(
+              codexSendRequestParams(codexSendRequestSite()),
+            );
+            return runtime.prepareExecutionRequest(planRequest, {
+              signal: getAbortController(conversationKey)?.signal,
+              permissionOwner: "external_runtime",
+            });
+          })
+        : undefined;
     if (await stopInactiveRequest()) return;
     if (
       !notifyProviderDispatch(
@@ -10213,15 +10268,34 @@ export async function sendQuestion(
             attachedPastChatText: codexPastChatText || undefined,
             reasoning: effectiveRequestConfig.reasoning,
             signal: getAbortController(conversationKey)?.signal,
-            libraryID: item?.libraryID,
-            paperItemID: item?.id,
-            activeItemId: item?.id,
+            executionRequest: nativeExecutionRequest,
           },
           {
             isLive: () => !assistantTurn.wasCancelled(),
             onDelta: assistantTurn.push,
             onStatus: (text) => setStatusSafely(text, "sending"),
             onUsage: handleUsage,
+            onMcpActivity: (event) => {
+              assistantTurn.codexTrace?.noteMcpToolActivity(event);
+              assistantMessage.quoteCitations = mergeQuoteCitations(
+                assistantMessage.quoteCitations,
+                event.quoteCitations,
+              );
+            },
+            onHostInteraction: (action) =>
+              resolveCodexNativeHostInteractionWithTrace({
+                body,
+                action,
+                trace: assistantTurn.codexTrace,
+                signal: getAbortController(conversationKey)?.signal,
+                isCurrent: () =>
+                  !assistantTurn.wasCancelled() &&
+                  requireCurrentPanelOwnership(
+                    body,
+                    item,
+                    "antigravity-review",
+                  ),
+              }),
             onActivity: (activity) =>
               assistantTurn.codexTrace?.appendRuntimeToolStep(
                 toAntigravityTraceStep(activity),
@@ -10231,7 +10305,7 @@ export async function sendQuestion(
       : isCodexNativeTurn
         ? await runCodexNativePanelTurn(
             {
-              executionRequest: codexExecutionRequest!,
+              executionRequest: nativeExecutionRequest!,
               scope: codexScope!,
               conversationGeneration,
               model: effectiveRequestConfig.model,
@@ -10255,7 +10329,7 @@ export async function sendQuestion(
               handleUsage,
               conversationKey,
               conversationGeneration,
-              skillRoutingReceipt: codexExecutionRequest?.skillRoutingReceipt,
+              skillRoutingReceipt: nativeExecutionRequest?.skillRoutingReceipt,
             },
           )
         : await callDirectChatTurnWithRecovery({

@@ -19,7 +19,7 @@ import {
  * How much the agent may do on its own. agy has no interactive approvals in
  * headless mode: a tool that needs approval is refused and reported.
  */
-export type AntigravityPermissionMode = "default" | "plan" | "full";
+export type AntigravityPermissionMode = "default" | "plan";
 
 type ZoteroPrefsAPI = {
   get?: (key: string, global?: boolean) => unknown;
@@ -125,7 +125,7 @@ export function setAntigravityEffortPref(mode: AntigravityEffortMode): void {
 
 export function getAntigravityPermissionModePref(): AntigravityPermissionMode {
   const raw = getStringPref("antigravityPermissionMode").trim();
-  return raw === "plan" || raw === "full" ? raw : "default";
+  return raw === "plan" ? "plan" : "default";
 }
 
 export function setAntigravityPermissionModePref(

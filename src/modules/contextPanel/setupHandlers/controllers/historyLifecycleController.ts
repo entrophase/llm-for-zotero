@@ -4188,7 +4188,9 @@ export function createHistoryLifecycleController(
   // A tab click navigates exactly like picking a conversation in the history
   // menu: prime the target mode, switch, and roll the priming back on failure.
   // The library lock is the sidebar's; the standalone window has none.
-  const resolveRememberedGlobalConversationKey = (libraryID: number): number => {
+  const resolveRememberedGlobalConversationKey = (
+    libraryID: number,
+  ): number => {
     const system = getConversationSystem();
     if (
       system === "claude_code" ||

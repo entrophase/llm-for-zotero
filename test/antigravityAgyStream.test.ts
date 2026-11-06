@@ -253,7 +253,6 @@ describe("Antigravity agy process helpers", function () {
         model: " gemini-x ",
         effort: "high",
         mode: "plan",
-        skipPermissions: true,
         conversationId: "c-9",
       }).slice(6),
       [
@@ -263,7 +262,6 @@ describe("Antigravity agy process helpers", function () {
         "high",
         "--mode",
         "plan",
-        "--dangerously-skip-permissions",
         "--conversation",
         "c-9",
       ],

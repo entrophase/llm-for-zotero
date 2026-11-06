@@ -12,7 +12,7 @@ type Result = Extract<AgyEvent, { kind: "result" }>;
 
 function harness(params: {
   stored?: string;
-  permissionMode?: "default" | "plan" | "full";
+  permissionMode?: "default" | "plan";
   effort?: "auto" | "low" | "medium" | "high";
   model?: string;
   events?: AgyEvent[];
@@ -105,7 +105,6 @@ describe("Antigravity panel turn", function () {
     assert.isUndefined(call.model, "the default entry passes no --model");
     assert.isUndefined(call.effort);
     assert.isUndefined(call.mode);
-    assert.isFalse(call.skipPermissions);
     assert.equal(call.binaryPath, "/opt/agy");
     assert.equal(call.cwd, "/tmp/skills");
     assert.include(call.prompt, "<instructions_and_context>");
@@ -168,16 +167,14 @@ describe("Antigravity panel turn", function () {
     assert.equal(plan.calls[0].effort, "high");
     assert.equal(plan.calls[0].model, "gemini-x");
 
-    const full = harness({
-      permissionMode: "full",
+    const denied = harness({
       result: { response: "Partial", deniedActions: ["run a command"] },
     });
     const outcome = await runAntigravityPanelTurn(
       { conversationKey: 41, messages },
       panel().callbacks,
-      full.deps,
+      denied.deps,
     );
-    assert.isTrue(full.calls[0].skipPermissions);
     assert.include(outcome.text, "Partial");
     assert.include(outcome.text, "not allowed to: run a command");
   });
@@ -363,7 +360,6 @@ describe("Antigravity panel turn", function () {
       };
     };
     h.deps.getMcpServerUrl = () => "http://127.0.0.1:23119/llm-for-zotero/mcp";
-    h.deps.getMcpBearerToken = () => "mock-bearer-token-123";
     h.deps.prepareWorkspace = async () => {
       workspacePrepared = true;
       return {

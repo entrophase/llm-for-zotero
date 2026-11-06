@@ -62,9 +62,10 @@ describe("Antigravity agy turn process", function () {
       }),
     ]);
     CodexAppServerProcess.loadSubprocessModule = async () => ({
+      pathSearch: async () => "C:/Windows/System32/reg.exe",
       call: async (opts: any) => {
         if (
-          opts?.command === "reg.exe" ||
+          opts?.command?.endsWith("reg.exe") ||
           opts?.command === "/usr/sbin/scutil"
         ) {
           return {
@@ -91,6 +92,51 @@ describe("Antigravity agy turn process", function () {
     const args = buildAgyArguments({ addDirs: ["/tmp/ctx", " "] });
     assert.deepEqual(args.slice(-2), ["--add-dir", "/tmp/ctx"]);
     assert.equal(args.filter((arg) => arg === "--add-dir").length, 1);
+  });
+
+  it("cancels a child returned after the turn was aborted without writing a prompt", async function () {
+    const abort = new AbortController();
+    let writes = 0;
+    let kills = 0;
+    CodexAppServerProcess.loadSubprocessModule = async () => ({
+      pathSearch: async () => "C:/Windows/System32/reg.exe",
+      call: async (options: { command: string }) => {
+        if (
+          options.command.endsWith("reg.exe") ||
+          options.command.endsWith("scutil")
+        ) {
+          return {
+            stdout: { readString: async () => "" },
+            wait: async () => ({ exitCode: 0 }),
+          };
+        }
+        abort.abort();
+        return {
+          stdin: {
+            write: async () => {
+              writes++;
+            },
+            close: async () => undefined,
+          },
+          stdout: { readString: async () => "" },
+          stderr: { readString: async () => "" },
+          wait: async () => ({ exitCode: -1 }),
+          kill: () => {
+            kills++;
+          },
+        };
+      },
+    });
+    const failure = await runAgyTurn({
+      binaryPath: "C:/Tools/agy.exe",
+      prompt: "Cancelled prompt",
+      signal: abort.signal,
+      onEvent: () => undefined,
+    }).catch((error: Error) => error);
+    assert.instanceOf(failure, Error);
+    assert.equal((failure as Error).name, "AbortError");
+    assert.equal(writes, 0);
+    assert.isAbove(kills, 0);
   });
 
   it("flushes trailing result without newline on stream EOF", async function () {
@@ -141,9 +187,10 @@ describe("Antigravity agy turn process", function () {
       }),
     ]);
     CodexAppServerProcess.loadSubprocessModule = async () => ({
+      pathSearch: async () => "C:/Windows/System32/reg.exe",
       call: async (opts: any) => {
         if (
-          opts?.command === "reg.exe" ||
+          opts?.command?.endsWith("reg.exe") ||
           opts?.command === "/usr/sbin/scutil"
         ) {
           return {

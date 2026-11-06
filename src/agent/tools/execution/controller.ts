@@ -165,6 +165,7 @@ export class InvocationController {
       ),
     ];
     return this.context.authorization?.kind === "external_runtime" &&
+      !this.context.authorization.reviewEffects &&
       this.tool.spec.executionClass === "external_effect" &&
       assessed?.plan.impact !== "read_only"
       ? allReceipts.map((receipt) => ({
@@ -354,7 +355,10 @@ export class InvocationController {
     assessed: AssessedInvocation,
     userApproval?: string,
   ): GrantAuthority {
-    if (this.context.authorization?.kind === "external_runtime")
+    if (
+      this.context.authorization?.kind === "external_runtime" &&
+      !this.context.authorization.reviewEffects
+    )
       return "external_runtime";
     if (userApproval) return "safe_confirmation";
     const policy =
@@ -377,6 +381,7 @@ export class InvocationController {
   ) {
     if (
       this.context.authorization?.kind === "external_runtime" &&
+      !this.context.authorization.reviewEffects &&
       assessed.plan.impact !== "read_only"
     ) {
       const grant = {
@@ -613,6 +618,7 @@ export class InvocationController {
             materialKind: output.materialKind,
             materialTitle: output.materialTitle,
             materialCitedSources: output.materialCitedSources,
+            paperDecisions: output.paperDecisions,
             batchItems: output.batchItems,
           },
         });

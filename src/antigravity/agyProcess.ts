@@ -33,7 +33,6 @@ export type AgyTurnOptions = {
   model?: string;
   effort?: "low" | "medium" | "high" | "xhigh" | "max";
   mode?: "plan";
-  skipPermissions?: boolean;
   settingsPath?: string;
   conversationId?: string;
   /** Folders agy may read besides its workspace (`--add-dir`). */
@@ -125,7 +124,14 @@ export function listAgyBinaryCandidates(params: {
         ? joinPath("\\", params.localAppData, "agy", "bin", "agy.exe")
         : "",
       params.localAppData
-        ? joinPath("\\", params.localAppData, "Programs", "agy", "bin", "agy.exe")
+        ? joinPath(
+            "\\",
+            params.localAppData,
+            "Programs",
+            "agy",
+            "bin",
+            "agy.exe",
+          )
         : "",
       params.localAppData
         ? joinPath("\\", params.localAppData, "Programs", "agy", "agy.exe")
@@ -204,13 +210,7 @@ export async function resolveAgyBinary(explicitPath?: string): Promise<string> {
 export function buildAgyArguments(
   options: Pick<
     AgyTurnOptions,
-    | "model"
-    | "effort"
-    | "mode"
-    | "skipPermissions"
-    | "settingsPath"
-    | "conversationId"
-    | "addDirs"
+    "model" | "effort" | "mode" | "settingsPath" | "conversationId" | "addDirs"
   >,
 ): string[] {
   // --print always takes a value: a bare one swallows the next flag as its
@@ -227,7 +227,6 @@ export function buildAgyArguments(
   if (options.model?.trim()) args.push("--model", options.model.trim());
   if (options.effort) args.push("--effort", options.effort);
   if (options.mode) args.push("--mode", options.mode);
-  if (options.skipPermissions) args.push("--dangerously-skip-permissions");
   if (options.settingsPath?.trim()) {
     args.push("--settings", options.settingsPath.trim());
   }
@@ -274,7 +273,8 @@ const PROXY_ENV_KEYS = [
 ];
 
 let systemProxyCache: { at: number; env: Record<string, string> } | null = null;
-let windowsProxyCache: { at: number; env: Record<string, string> } | null = null;
+let windowsProxyCache: { at: number; env: Record<string, string> } | null =
+  null;
 
 async function readMacSystemProxy(): Promise<Record<string, string>> {
   if (systemProxyCache && Date.now() - systemProxyCache.at < 30_000) {
@@ -310,7 +310,7 @@ async function readWindowsSystemProxy(): Promise<Record<string, string>> {
   try {
     const Subprocess = await CodexAppServerProcess.loadSubprocessModule();
     const proc = await Subprocess.call({
-      command: "reg.exe",
+      command: await Subprocess.pathSearch("reg.exe"),
       arguments: [
         "query",
         "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings",
@@ -422,15 +422,18 @@ export async function runAgyTurn(
 
   let proc: any;
   try {
+    const environment = await buildAgyLaunchEnvironment(binary);
+    if (options.signal?.aborted) throw createAbortError();
     proc = await Subprocess.call({
       command,
       arguments: commandArgs,
       stderr: "pipe",
-      environment: await buildAgyLaunchEnvironment(binary),
+      environment,
       environmentAppend: true,
       ...(options.cwd ? { workdir: options.cwd } : {}),
     });
   } catch (error) {
+    if (options.signal?.aborted) throw createAbortError();
     throw new AgyTurnError(
       `Failed to start Antigravity CLI (${binary}): ${
         error instanceof Error ? error.message : String(error)
@@ -473,6 +476,10 @@ export async function runAgyTurn(
     if (!firstEventSeen) void closeStdin();
   }, AGY_STDIN_EOF_FALLBACK_MS);
   try {
+    if (options.signal?.aborted) {
+      killAgy(proc);
+      throw createAbortError();
+    }
     // agy may exit before it reads the input (a flag it rejects, an input
     // line it cannot take). The write then fails with "File closed"; keep
     // reading so the error agy printed is what the user sees.

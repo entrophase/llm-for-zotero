@@ -6749,9 +6749,7 @@ function bindAntigravityPreferences(doc: Document): void {
   });
   permissionSelect?.addEventListener("change", () => {
     const value = permissionSelect.value;
-    setAntigravityPermissionModePref(
-      value === "plan" || value === "full" ? value : "default",
-    );
+    setAntigravityPermissionModePref(value === "plan" ? "plan" : "default");
   });
   pathInput?.addEventListener("change", () => {
     setAntigravityBinaryPathPref(pathInput.value);
@@ -6808,7 +6806,7 @@ function bindCliProxyPreferences(doc: Document): void {
       current.mode !== "manual"
         ? ""
         : url
-          ? `${t("Codex and Antigravity will use")} ${url}`
+          ? `${t("Antigravity will use")} ${url}`
           : t("Enter an address and a port between 1 and 65535.");
   };
 

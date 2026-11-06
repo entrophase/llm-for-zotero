@@ -219,11 +219,20 @@ export class InvocationAssessor {
       Boolean(options.forceConfirmation && options.callerKind === "action"),
     );
     if (delegated) proposal.runtime = "external";
-    const directDecision = hostAccessAuthorization
-      ? hostAccessAuthorization
-      : delegated
-        ? authorizeExternalAction(proposal)
-        : null;
+    const externalDecision = delegated
+      ? authorizeExternalAction(proposal)
+      : null;
+    let directDecision = hostAccessAuthorization ?? externalDecision;
+    if (context.authorization?.reviewEffects && plan.impact !== "read_only") {
+      if (externalDecision?.kind === "block") directDecision = externalDecision;
+      else if (directDecision?.kind === "execute") {
+        directDecision = {
+          kind: "confirm",
+          reason:
+            "Review the proposed changes before Antigravity applies them.",
+        };
+      }
+    }
     const decision = directDecision
       ? { authorization: directDecision }
       : await this.authorizationService.assess(
