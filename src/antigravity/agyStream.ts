@@ -6,7 +6,7 @@ import type { ChatMessage, MessageContent, UsageStats } from "../shared/llm";
  * pipes. This module holds the pure half (prompt text in, events out) so it
  * can be tested without a subprocess.
  *
- * Output events, in order per turn: one `init`, any number of `step_update`,
+ * Output starts with one `init`. Each turn emits zero or more `step_update`,
  * one `result`. A step's `step_type` is a closed vocabulary; `agent_response`
  * steps stream the answer as `text_delta` fragments while ACTIVE, `tool`
  * steps carry `tool_name`/`tool_info`. The terminal `result` carries the
@@ -39,9 +39,12 @@ export type AgyEvent =
       toolName: string;
       state: "ACTIVE" | "DONE" | string;
       summary?: string;
+      usage?: AgyUsage;
     }
+  | { kind: "usage"; stepIndex: number; usage: AgyUsage }
   | {
       kind: "result";
+      numTurns?: number;
       conversationId: string;
       status: string;
       response: string;
@@ -129,6 +132,14 @@ export function parseAgyStreamLine(raw: string): AgyEvent | null {
     const payload = payloadOf(line, "step_update");
     const stepType = text(payload.step_type);
     const stepIndex = finiteNumber(payload.step_index) ?? -1;
+    const usage = normalizeUsage(payload.usage);
+    const completedUsage =
+      stepIndex >= 0 && /^(DONE|COMPLETED|SUCCESS)$/i.test(text(payload.state))
+        ? usage
+        : undefined;
+    if (completedUsage && stepType !== "tool") {
+      return { kind: "usage", stepIndex, usage: completedUsage };
+    }
     if (stepType === "agent_response") {
       const delta = text(payload.text_delta);
       return delta
@@ -153,6 +164,7 @@ export function parseAgyStreamLine(raw: string): AgyEvent | null {
         toolName,
         state: text(payload.state) || "ACTIVE",
         summary: summarizeToolInfo(toolInfo),
+        ...(completedUsage ? { usage: completedUsage } : {}),
       };
     }
     return null;
@@ -162,6 +174,9 @@ export function parseAgyStreamLine(raw: string): AgyEvent | null {
     const error = payload.error;
     return {
       kind: "result",
+      ...(typeof payload.num_turns === "number"
+        ? { numTurns: payload.num_turns }
+        : {}),
       conversationId: text(payload.conversation_id).trim(),
       status: text(payload.status).trim() || "UNKNOWN",
       response: text(payload.response),
@@ -212,6 +227,45 @@ export class AgyTextAccumulator {
       .map(([, value]) => value)
       .join("\n\n");
   }
+}
+
+export function getAgyTurnUsage(
+  result: Extract<AgyEvent, { kind: "result" }>,
+  previous: Extract<AgyEvent, { kind: "result" }> | undefined,
+  steps: ReadonlyMap<number, AgyUsage>,
+  resumed: boolean,
+): AgyUsage | undefined {
+  if (steps.size) {
+    const total: AgyUsage = {};
+    for (const step of steps.values()) {
+      for (const field of Object.keys(step) as Array<keyof AgyUsage>) {
+        const value = step[field];
+        if (value !== undefined) total[field] = (total[field] ?? 0) + value;
+      }
+    }
+    return total;
+  }
+  if (!result.usage) return undefined;
+  if (!previous) {
+    return result.numTurns === 1 || (!resumed && result.numTurns === undefined)
+      ? result.usage
+      : undefined;
+  }
+  if (
+    !previous.usage ||
+    previous.numTurns === undefined ||
+    result.numTurns !== previous.numTurns + 1
+  )
+    return undefined;
+  const delta: AgyUsage = {};
+  for (const field of Object.keys(result.usage) as Array<keyof AgyUsage>) {
+    const value = result.usage[field];
+    const baseline = previous.usage[field];
+    if (value === undefined) continue;
+    if (baseline === undefined || value < baseline) return undefined;
+    delta[field] = value - baseline;
+  }
+  return delta;
 }
 
 export function toUsageStats(usage: AgyUsage | undefined): UsageStats | null {

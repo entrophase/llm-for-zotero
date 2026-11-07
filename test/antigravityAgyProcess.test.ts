@@ -1,6 +1,18 @@
+import { PassThrough } from "node:stream";
 import { assert } from "chai";
-import { buildAgyArguments, runAgyTurn } from "../src/antigravity/agyProcess";
+import {
+  buildAgyArguments,
+  openAgySession,
+  runAgyTurn,
+} from "../src/antigravity/agyProcess";
 import { CodexAppServerProcess } from "../src/utils/codexAppServerProcess";
+import {
+  activeAgyTurns,
+  agySessions,
+  closeAgyConversation,
+  scheduleAgyRelease,
+  setAgyConversationView,
+} from "../src/antigravity/sessionPool";
 
 /** A child like agy 1.4.2: it stays alive after its result until killed. */
 function lingeringAgy(lines: string[]) {
@@ -50,6 +62,119 @@ describe("Antigravity agy turn process", function () {
   const original = CodexAppServerProcess.loadSubprocessModule;
   afterEach(function () {
     CodexAppServerProcess.loadSubprocessModule = original;
+  });
+
+  it("keeps the session while either view or an active turn owns the conversation", async function () {
+    const key = 401;
+    const sidebar = {} as Element;
+    const window = {} as Element;
+    let closed = false;
+    let reportClosed!: () => void;
+    const didClose = new Promise<void>((resolve) => {
+      reportClosed = resolve;
+    });
+    agySessions.set(key, {
+      binding: "test",
+      nativeId: "native",
+      token: "fixture",
+      workspace: { dir: "", settingsPath: "" },
+      transport: {
+        reusable: true,
+        send: async () => {
+          throw new Error("Unexpected send");
+        },
+        close: async () => {
+          closed = true;
+          reportClosed();
+        },
+      },
+    });
+    try {
+      setAgyConversationView(sidebar, key);
+      setAgyConversationView(window, key);
+      setAgyConversationView(sidebar, key + 1);
+      await new Promise((resolve) => setTimeout(resolve, 1050));
+      assert.isFalse(closed);
+      activeAgyTurns.set(key, () => undefined);
+      setAgyConversationView(window);
+      await new Promise((resolve) => setTimeout(resolve, 1050));
+      assert.isFalse(closed);
+      activeAgyTurns.delete(key);
+      scheduleAgyRelease(key);
+      await didClose;
+      assert.isFalse(agySessions.has(key));
+    } finally {
+      activeAgyTurns.delete(key);
+      setAgyConversationView(sidebar);
+      setAgyConversationView(window);
+      await closeAgyConversation(key);
+    }
+  });
+
+  it("uses a single child for ten turns and accounts for cumulative usage once", async function () {
+    const output = new PassThrough();
+    output.setEncoding("utf8");
+    const reader = output[Symbol.asyncIterator]();
+    let launches = 0;
+    let turns = 0;
+    let closed = false;
+    CodexAppServerProcess.loadSubprocessModule = async () => ({
+      pathSearch: async () => "reg.exe",
+      call: async ({ command }: { command: string }) => {
+        if (/reg\.exe$|scutil$/.test(command)) {
+          return {
+            stdout: { readString: async () => "" },
+            wait: async () => ({ exitCode: 0 }),
+          };
+        }
+        launches++;
+        return {
+          stdin: {
+            async write() {
+              turns++;
+              if (turns === 1)
+                output.write('{"event":"init","conversation_id":"c1"}\n');
+              output.write(
+                JSON.stringify({
+                  event: "result",
+                  conversation_id: "c1",
+                  status: "SUCCESS",
+                  response: `Answer ${turns}`,
+                  num_turns: turns,
+                  usage: { input_tokens: turns * 11, output_tokens: turns * 3 },
+                }) + "\n",
+              );
+            },
+            async close() {
+              closed = true;
+              output.end();
+            },
+          },
+          stdout: { readString: async () => (await reader.next()).value ?? "" },
+          wait: async () => ({ exitCode: 0 }),
+        };
+      },
+    });
+    const session = await openAgySession({ binaryPath: "/opt/agy" });
+    try {
+      for (let turn = 1; turn <= 10; turn++) {
+        const result = await session.send({
+          prompt: `Question ${turn}`,
+          onEvent: () => undefined,
+        });
+        assert.equal(result.response, `Answer ${turn}`);
+        assert.deepInclude(result.usage, {
+          input_tokens: 11,
+          output_tokens: 3,
+        });
+        assert.isTrue(session.reusable);
+      }
+      assert.equal(launches, 1);
+      assert.isFalse(closed);
+    } finally {
+      await session.close();
+    }
+    assert.isTrue(closed);
   });
 
   it("ends agy once the result is in instead of waiting for it to exit", async function () {

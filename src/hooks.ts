@@ -1,3 +1,4 @@
+import { shutdownAgySessions } from "./antigravity/sessionPool";
 import { appLogger } from "./core/logging";
 import {
   createStartupLifecycle,
@@ -792,6 +793,7 @@ async function onShutdown(reason: PluginLifecycleReason = {}): Promise<void> {
 async function shutdownPlugin(reason: PluginLifecycleReason): Promise<void> {
   const { shutdownDshProcesses } = require("./dsh/process");
   shutdownDshProcesses();
+  await runShutdownStep("Antigravity sessions", shutdownAgySessions);
   // An unfinished startup stops at its next check. A step stuck in a database
   // call may outlive teardown; the sequence then undoes what that step
   // registered (cleanUpStoppedStartup) and registers nothing more.

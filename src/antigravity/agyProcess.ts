@@ -10,6 +10,7 @@ import {
 import {
   describeAgyFailure,
   encodeAgyUserEvent,
+  getAgyTurnUsage,
   isAgyAuthenticationFailure,
   parseAgyStreamLine,
   type AgyEvent,
@@ -18,10 +19,7 @@ import {
 /**
  * Runs one turn of the Antigravity CLI in headless stream-json mode.
  *
- * Every turn is its own `agy` process: the conversation lives on agy's side
- * and is resumed with `--conversation <id>`, so nothing has to stay running
- * between turns. The prompt goes in as one stdin `user` event; stdin stays
- * open until the turn's `result` arrives, then closing it ends the session.
+ * The stream stays open for consecutive turns in the same conversation.
  *
  * Authentication is agy's own: it uses the Google sign-in saved by an
  * interactive `agy` run. The plugin never reads or forwards those credentials.
@@ -409,20 +407,37 @@ async function settleWithin<T>(
   }
 }
 
-export async function runAgyTurn(
-  options: AgyTurnOptions,
-): Promise<AgyTurnResult> {
+type AgyTurnInput = Pick<AgyTurnOptions, "prompt" | "signal" | "onEvent">;
+
+export class AgySessionUnavailableError extends Error {}
+
+export type AgySession = {
+  readonly reusable: boolean;
+  send: (input: AgyTurnInput) => Promise<AgyTurnResult>;
+  close: (immediate?: boolean) => Promise<void>;
+};
+
+export async function resolveAgyLaunch(binaryPath?: string) {
+  const binary = await resolveAgyBinary(binaryPath);
+  const environment = await buildAgyLaunchEnvironment(binary);
+  return { binary, environment };
+}
+
+export async function openAgySession(
+  options: Omit<AgyTurnOptions, "prompt" | "onEvent">,
+  launch?: Awaited<ReturnType<typeof resolveAgyLaunch>>,
+  onExit?: () => void,
+): Promise<AgySession> {
   if (options.signal?.aborted) throw createAbortError();
+  const { binary, environment } =
+    launch ?? (await resolveAgyLaunch(options.binaryPath));
   const Subprocess = await CodexAppServerProcess.loadSubprocessModule();
-  const binary = await resolveAgyBinary(options.binaryPath);
   const { command, commandArgs } = buildAgyCommand(
     binary,
     buildAgyArguments(options),
   );
-
   let proc: any;
   try {
-    const environment = await buildAgyLaunchEnvironment(binary);
     if (options.signal?.aborted) throw createAbortError();
     proc = await Subprocess.call({
       command,
@@ -435,151 +450,205 @@ export async function runAgyTurn(
   } catch (error) {
     if (options.signal?.aborted) throw createAbortError();
     throw new AgyTurnError(
-      `Failed to start Antigravity CLI (${binary}): ${
-        error instanceof Error ? error.message : String(error)
-      }`,
+      `Failed to start Antigravity CLI (${binary}): ${String(error)}`,
     );
   }
 
-  let stderr = "";
+  type ActiveTurn = {
+    input: AgyTurnInput;
+    finish: (result?: AgyTurnResult, error?: unknown) => void;
+    firstEventSeen: boolean;
+  };
+  let active: ActiveTurn | undefined;
   let stdinClosed = false;
+  let exited = false;
+  let reading = false;
+  let closing: Promise<void> | undefined;
+  let stderr = "";
+  let nativeId = options.conversationId;
+  let previousResult: AgyTurnResult | undefined;
   const closeStdin = async () => {
     if (stdinClosed) return;
     stdinClosed = true;
-    try {
-      await proc.stdin?.close?.();
-    } catch {
-      /* already closed */
-    }
+    await proc.stdin?.close?.().catch(() => undefined);
   };
-  const onAbort = () => killAgy(proc);
-  options.signal?.addEventListener("abort", onAbort, { once: true });
-
-  const stderrLoop = (async () => {
-    while (true) {
-      let chunk = "";
-      try {
-        chunk = await proc.stderr?.readString?.();
-      } catch {
-        break;
+  const exit = Promise.resolve(proc.wait?.()).catch(() => undefined);
+  const close = (immediate = false): Promise<void> => {
+    if (immediate) {
+      active?.finish(undefined, createAbortError());
+      killAgy(proc);
+    }
+    return (closing ??= (async () => {
+      const graceful = (async () => {
+        await closeStdin();
+        await exit;
+        return true;
+      })();
+      if (!(await settleWithin(graceful, AGY_EXIT_WAIT_MS))) {
+        killAgy(proc);
+        await settleWithin(exit, AGY_KILL_GRACE_MS + 500);
       }
-      if (!chunk) break;
-      stderr = (stderr + chunk).slice(-8000);
+    })());
+  };
+
+  void (async () => {
+    try {
+      for (;;) {
+        const chunk = await proc.stderr?.readString?.();
+        if (!chunk) break;
+        stderr = (stderr + chunk).slice(-8000);
+      }
+    } catch {
+      // The child may have been terminated while stderr was being read.
     }
   })();
 
-  // agy reads stream-json input line by line, so stdin stays open until the
-  // turn's result. Should a build wait for end of input instead, nothing
-  // would ever arrive: after a quiet spell stdin is closed so it can start.
-  let firstEventSeen = false;
-  const eofFallback = setTimeout(() => {
-    if (!firstEventSeen) void closeStdin();
-  }, AGY_STDIN_EOF_FALLBACK_MS);
-  try {
-    if (options.signal?.aborted) {
-      killAgy(proc);
-      throw createAbortError();
-    }
-    // agy may exit before it reads the input (a flag it rejects, an input
-    // line it cannot take). The write then fails with "File closed"; keep
-    // reading so the error agy printed is what the user sees.
-    let writeError: unknown = null;
-    try {
-      await proc.stdin.write(encodeAgyUserEvent(options.prompt));
-    } catch (error) {
-      writeError = error;
-      stdinClosed = true;
-    }
+  const read = async () => {
     let buffer = "";
-    let result: AgyTurnResult | null = null;
-    while (!result) {
-      let chunk = "";
-      try {
-        chunk = await proc.stdout.readString();
-      } catch {
-        break;
-      }
-      if (!chunk) break;
-      buffer += chunk;
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-      for (const line of lines) {
-        const event = parseAgyStreamLine(line);
-        if (!event) continue;
-        firstEventSeen = true;
-        options.onEvent(event);
-        if (event.kind === "result") {
-          result = event;
-          break;
-        }
-      }
-    }
-    if (!result && buffer.trim()) {
-      const event = parseAgyStreamLine(buffer.trim());
-      if (event) {
-        firstEventSeen = true;
-        options.onEvent(event);
-        if (event.kind === "result") {
-          result = event;
-        }
-      }
-    }
-    await closeStdin();
-    // agy 1.4.2 keeps running once the result is out, even at end of input,
-    // and ignores SIGTERM, so the turn ends it. When stdout closed without a
-    // result agy is already exiting; give it a moment to report its code.
-    if (result) killAgy(proc);
-    let exit = await settleWithin<{ exitCode?: number }>(
-      proc.wait?.(),
-      AGY_EXIT_WAIT_MS,
-    );
-    if (!exit) {
-      killAgy(proc);
-      exit = await settleWithin(proc.wait?.(), AGY_EXIT_WAIT_MS);
-    }
-    await settleWithin(stderrLoop, AGY_EXIT_WAIT_MS);
-    if (options.signal?.aborted) throw createAbortError();
-    if (result) {
-      const isExplicitError =
-        /^(ERROR|FAILED|CANCELLED|CANCELED)$/i.test(result.status) ||
-        Boolean(result.error);
+    const steps = new Map<number, NonNullable<AgyTurnResult["usage"]>>();
+    const accept = (line: string) => {
+      const event = parseAgyStreamLine(line);
+      if (!event || !active) return;
+      active.firstEventSeen = true;
       if (
-        !isExplicitError &&
-        (/^(SUCCESS|OK|COMPLETED?)$/i.test(result.status) || result.response)
+        (event.kind === "init" || event.kind === "result") &&
+        event.conversationId
       ) {
-        return result;
+        if (nativeId && nativeId !== event.conversationId) {
+          throw new AgyTurnError(
+            "Antigravity returned an unexpected conversation ID.",
+          );
+        }
+        nativeId = event.conversationId;
       }
-      const message =
-        result.error || describeAgyFailure(stderr) || result.status;
-      throw new AgyTurnError(
-        `Antigravity CLI failed: ${message}`,
-        isAgyAuthenticationFailure(message),
+      if (event.kind === "usage") {
+        steps.set(event.stepIndex, event.usage);
+        return;
+      }
+      if (event.kind === "tool" && event.usage) {
+        steps.set(event.stepIndex, event.usage);
+      }
+      active.input.onEvent(event);
+      if (event.kind !== "result") return;
+      if (
+        event.error ||
+        /^(ERROR|FAILED|CANCELLED|CANCELED)$/i.test(event.status) ||
+        (!/^(SUCCESS|OK|COMPLETED?)$/i.test(event.status) && !event.response)
+      ) {
+        const message =
+          event.error || describeAgyFailure(stderr) || event.status;
+        throw new AgyTurnError(
+          `Antigravity CLI failed: ${message}`,
+          isAgyAuthenticationFailure(message),
+        );
+      }
+      const usage = getAgyTurnUsage(
+        event,
+        previousResult,
+        steps,
+        Boolean(options.conversationId),
       );
+      previousResult = event;
+      steps.clear();
+      active.finish({ ...event, usage });
+    };
+    try {
+      for (;;) {
+        const chunk = await proc.stdout.readString();
+        if (!chunk) break;
+        buffer += chunk;
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) accept(line);
+      }
+      if (buffer.trim()) accept(buffer);
+      const message =
+        describeAgyFailure(stderr) ||
+        "Antigravity exited before completing the turn.";
+      active?.finish(
+        undefined,
+        new AgyTurnError(message, isAgyAuthenticationFailure(message)),
+      );
+    } catch (error) {
+      active?.finish(undefined, error);
+      void close(true);
+    } finally {
+      exited = true;
+      onExit?.();
     }
-    const writeFailure = writeError
-      ? ` (agy stopped reading its input: ${
-          writeError instanceof Error ? writeError.message : String(writeError)
-        })`
-      : "";
-    const message =
-      describeAgyFailure(stderr) ||
-      `agy exited with code ${String(exit?.exitCode ?? "unknown")}${writeFailure}`;
-    appLogger.warn("Antigravity CLI turn ended without a result", {
-      exitCode: exit?.exitCode,
-      writeError,
-      stderr: stderr.slice(-2000),
-    });
-    throw new AgyTurnError(
-      isAgyAuthenticationFailure(message)
-        ? "Antigravity CLI is not signed in. Run `agy` once in a terminal and sign in with your Google account, then try again."
-        : `Antigravity CLI failed: ${message}`,
-      isAgyAuthenticationFailure(message),
-    );
+  };
+
+  const session: AgySession = {
+    get reusable() {
+      return !exited && !closing && !stdinClosed;
+    },
+    close,
+    send(input) {
+      if (input.signal?.aborted) return Promise.reject(createAbortError());
+      if (!session.reusable) {
+        return Promise.reject(
+          new AgySessionUnavailableError("Antigravity exited before sending."),
+        );
+      }
+      if (active)
+        return Promise.reject(
+          new AgyTurnError("Antigravity is already answering."),
+        );
+      return new Promise<AgyTurnResult>((resolve, reject) => {
+        const abort = () => {
+          active?.finish(undefined, createAbortError());
+          void close(true);
+        };
+        const fallback = setTimeout(() => {
+          if (!active?.firstEventSeen) {
+            appLogger.debug("Antigravity transport: EOF compatibility");
+            void closeStdin();
+          }
+        }, AGY_STDIN_EOF_FALLBACK_MS);
+        active = {
+          input,
+          firstEventSeen: false,
+          finish(result, error) {
+            active = undefined;
+            clearTimeout(fallback);
+            input.signal?.removeEventListener("abort", abort);
+            if (result) resolve(result);
+            else reject(error);
+          },
+        };
+        input.signal?.addEventListener("abort", abort, { once: true });
+        const pending = active;
+        void proc.stdin.write(encodeAgyUserEvent(input.prompt)).catch(() => {
+          if (active !== pending) return;
+          stdinClosed = true;
+          active?.finish(
+            undefined,
+            new AgyTurnError("Antigravity stopped accepting input."),
+          );
+          void close(true);
+        });
+        if (!reading) {
+          reading = true;
+          void read();
+        }
+      });
+    },
+  };
+  if (options.signal?.aborted) {
+    await close(true);
+    throw createAbortError();
+  }
+  return session;
+}
+
+export async function runAgyTurn(
+  options: AgyTurnOptions,
+): Promise<AgyTurnResult> {
+  const session = await openAgySession(options);
+  try {
+    return await session.send(options);
   } finally {
-    clearTimeout(eofFallback);
-    options.signal?.removeEventListener("abort", onAbort);
-    await closeStdin();
-    killAgy(proc);
+    await session.close(true);
   }
 }
 

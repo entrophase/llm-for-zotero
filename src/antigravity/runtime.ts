@@ -5,7 +5,26 @@ import type {
   ReasoningConfig,
 } from "../shared/llm";
 import { getUserSkillsRuntimeRootDir } from "../agent/skills/userSkills";
-import { withConversationWriteLock } from "../shared/conversationWriteFence";
+import {
+  areConversationWritesFrozen,
+  getConversationWriteGeneration,
+  isConversationWriteGenerationCurrent,
+  withConversationWriteLock,
+} from "../shared/conversationWriteFence";
+import { createAbortController } from "../utils/apiHelpers";
+import { appLogger } from "../core/logging";
+import { getAntigravityProfileSignature } from "./constants";
+import {
+  activeAgyTurns,
+  agySessions,
+  agySessionsStopping,
+  closeAgyConversation,
+  scheduleAgyRelease,
+  registerAgyShutdown,
+  trackAgyStart,
+  type AgySessionWorkspace,
+  type RetainedAgySession,
+} from "./sessionPool";
 import {
   getAntigravityConversationSummary,
   upsertAntigravityConversationSummary,
@@ -19,7 +38,13 @@ import {
   toUsageStats,
 } from "./agyStream";
 import { ensureDir, removePathQuietly, writeFileBytes } from "../utils/geckoFs";
-import { runAgyTurn, type AgyTurnOptions } from "./agyProcess";
+import {
+  AgySessionUnavailableError,
+  openAgySession,
+  resolveAgyLaunch,
+  runAgyTurn,
+  type AgyTurnOptions,
+} from "./agyProcess";
 import { toAntigravityModelPref } from "./modelCatalog";
 import {
   getAntigravityBinaryPathPref,
@@ -51,6 +76,7 @@ const sentSystemContextByConversation = new Map<number, string>();
 
 export function forgetAntigravitySentContext(conversationKey: number): void {
   sentSystemContextByConversation.delete(conversationKey);
+  void closeAgyConversation(conversationKey, true);
 }
 
 export function resolveAntigravityRuntimeCwd(): string | undefined {
@@ -64,6 +90,7 @@ export function resolveAntigravityRuntimeCwd(): string | undefined {
 
 export type AntigravityPanelTurn = {
   conversationKey: number;
+  startedAt?: number;
   messages: ChatMessage[];
   model?: string;
   reasoning?: ReasoningConfig | string;
@@ -114,11 +141,24 @@ function isFinishedStepState(state: string): boolean {
 async function rememberConversationId(
   conversationKey: number,
   conversationId: string,
+  expected?: { instanceID?: string; generation: number; profile: string },
 ): Promise<void> {
   if (!conversationId) return;
   await withConversationWriteLock(conversationKey, async () => {
     const summary = await getAntigravityConversationSummary(conversationKey);
     if (!summary || summary.providerSessionId === conversationId) return;
+    if (
+      expected &&
+      (agySessionsStopping() ||
+        summary.instanceID !== expected.instanceID ||
+        areConversationWritesFrozen(conversationKey) ||
+        !isConversationWriteGenerationCurrent(
+          conversationKey,
+          expected.generation,
+        ) ||
+        getAntigravityProfileSignature() !== expected.profile)
+    )
+      return;
     await upsertAntigravityConversationSummary({
       conversationKey: summary.conversationKey,
       instanceID: summary.instanceID,
@@ -148,11 +188,6 @@ function formatToolStatus(toolName: string, summary?: string): string {
 /** A file holding a turn's context for agy to read, and its folder. */
 export type AgyContextFile = { path: string; dir: string };
 
-export type AgySessionWorkspace = {
-  dir: string;
-  settingsPath: string;
-};
-
 async function prepareAgySessionWorkspace(params: {
   conversationKey: number;
   scopeToken: string;
@@ -171,7 +206,10 @@ async function prepareAgySessionWorkspace(params: {
   const settingsPath = joinLocalPath(dir, "settings.json");
 
   try {
-    if (!(await ensureDir(agentsDir))) return null;
+    if (!(await ensureDir(agentsDir))) {
+      await removePathQuietly(dir);
+      return null;
+    }
 
     const mcpConfig = {
       mcpServers: {
@@ -228,10 +266,13 @@ function joinLocalPath(...parts: string[]): string {
  */
 async function writeAgyContextFile(
   text: string,
+  workspace?: AgySessionWorkspace | null,
 ): Promise<AgyContextFile | null> {
-  const temp = (
-    globalThis as { Zotero?: { getTempDirectory?: () => { path?: string } } }
-  ).Zotero?.getTempDirectory?.()?.path?.trim();
+  const temp =
+    workspace?.dir ||
+    (
+      globalThis as { Zotero?: { getTempDirectory?: () => { path?: string } } }
+    ).Zotero?.getTempDirectory?.()?.path?.trim();
   if (!temp) return null;
   const dir = joinLocalPath(
     temp,
@@ -258,7 +299,10 @@ export type AntigravityTurnDeps = {
     conversationKey: number,
     conversationId: string,
   ) => Promise<void>;
-  writeContextFile: (text: string) => Promise<AgyContextFile | null>;
+  writeContextFile: (
+    text: string,
+    workspace?: AgySessionWorkspace | null,
+  ) => Promise<AgyContextFile | null>;
   removeContextFile: (file: AgyContextFile) => Promise<void>;
   readSettings: () => {
     binaryPath: string;
@@ -305,17 +349,109 @@ export async function runAntigravityPanelTurn(
   panel: AntigravityPanelCallbacks,
   overrides: Partial<AntigravityTurnDeps> = {},
 ): Promise<ModelTurnOutcome> {
+  const persistent = !overrides.runTurn;
+  const key = turn.conversationKey;
+  if (!persistent) return executeAntigravityTurn(turn, panel, overrides, false);
+  if (activeAgyTurns.has(key))
+    throw new Error("Antigravity is already answering in this conversation.");
+  registerAgyShutdown();
+  const signal = turn.signal;
+  const controller = createAbortController();
+  const cancel = () => controller.abort();
+  signal?.addEventListener("abort", cancel, { once: true });
+  if (signal?.aborted) cancel();
+  turn = { ...turn, signal: controller.signal };
+  activeAgyTurns.set(key, cancel);
+  try {
+    try {
+      return await executeAntigravityTurn(turn, panel, overrides, true);
+    } catch (error) {
+      if (!(error instanceof AgySessionUnavailableError)) throw error;
+      return await executeAntigravityTurn(turn, panel, overrides, true);
+    }
+  } finally {
+    signal?.removeEventListener("abort", cancel);
+    activeAgyTurns.delete(key);
+    scheduleAgyRelease(key);
+  }
+}
+
+async function executeAntigravityTurn(
+  turn: AntigravityPanelTurn,
+  panel: AntigravityPanelCallbacks,
+  overrides: Partial<AntigravityTurnDeps>,
+  persistent: boolean,
+): Promise<ModelTurnOutcome> {
+  const key = turn.conversationKey;
+  const timingStart = turn.startedAt ?? Date.now();
+  const readyAt = Date.now();
   const deps = { ...DEFAULT_TURN_DEPS, ...overrides };
   const settings = deps.readSettings();
+  const model =
+    toAntigravityModelPref(turn.model ?? settings.model) || undefined;
+  const generation =
+    turn.executionRequest?.conversationGeneration ??
+    getConversationWriteGeneration(key);
+  const profile = persistent ? getAntigravityProfileSignature() : "";
+  const assertCurrent = () => {
+    if (
+      turn.signal?.aborted ||
+      (persistent &&
+        (agySessionsStopping() ||
+          areConversationWritesFrozen(key) ||
+          !isConversationWriteGenerationCurrent(key, generation) ||
+          getAntigravityProfileSignature() !== profile))
+    ) {
+      const error = new Error("Antigravity turn cancelled");
+      error.name = "AbortError";
+      throw error;
+    }
+  };
+  assertCurrent();
+  const summary = persistent
+    ? await getAntigravityConversationSummary(key)
+    : undefined;
+  const expected = persistent
+    ? { instanceID: summary?.instanceID, generation, profile }
+    : undefined;
   const storedConversationId = turn.freshConversation
     ? ""
-    : await deps.getStoredConversationId(turn.conversationKey);
+    : persistent
+      ? summary?.providerSessionId?.trim() || ""
+      : await deps.getStoredConversationId(key);
+  const launch = persistent
+    ? await resolveAgyLaunch(settings.binaryPath)
+    : undefined;
+  const mcpServerUrl = deps.getMcpServerUrl?.() || "";
+  const binding = JSON.stringify([
+    expected,
+    launch,
+    model,
+    settings.effort,
+    settings.permissionMode,
+    settings.cwd,
+    mcpServerUrl,
+  ]);
+  let retained = persistent ? agySessions.get(key) : undefined;
+  if (
+    persistent &&
+    (!retained?.transport.reusable ||
+      retained.binding !== binding ||
+      retained.nativeId !== storedConversationId ||
+      turn.freshConversation)
+  ) {
+    await closeAgyConversation(key);
+    retained = undefined;
+  }
+  assertCurrent();
+
+  const reused = Boolean(retained);
   const resumed = Boolean(storedConversationId);
   const contextFingerprint = fingerprintSystemContext(turn.messages);
   const includeSystem =
     !resumed ||
-    sentSystemContextByConversation.get(turn.conversationKey) !==
-      contextFingerprint;
+    (persistent && !reused) ||
+    sentSystemContextByConversation.get(key) !== contextFingerprint;
   const { context, question } = splitAgyPrompt({
     messages: turn.messages,
     resumed,
@@ -324,103 +460,115 @@ export async function runAntigravityPanelTurn(
   const inlinePrompt = context
     ? `${context}\n\n<question>\n${question}\n</question>`
     : question;
-  // agy cuts a long inline message and keeps its head, so a long paper
-  // goes in as a file agy reads in full. Should the file not be written,
-  // the question leads, and a cut loses only the end of the context.
-  let contextFile: AgyContextFile | null = null;
-  let prompt = inlinePrompt;
-  if (inlinePrompt.length > AGY_INLINE_PROMPT_LIMIT) {
-    const fileText =
-      question.length > AGY_INLINE_PROMPT_LIMIT / 2
-        ? `${context}\n\n<question>\n${question}\n</question>`
-        : context;
-    contextFile = await deps.writeContextFile(fileText);
-    prompt = contextFile
-      ? buildAgyFileContextPrompt({
-          question:
-            fileText === context
-              ? question
-              : "The question is at the end of the file below.",
-          contextPath: contextFile.path,
-          contextChars: fileText.length,
-        })
-      : `<question>\n${question}\n</question>\n\n${context}`;
-  }
 
-  let scopedMcp: ReturnType<typeof registerScopedZoteroMcpScope> | null = null;
-  let workspace: AgySessionWorkspace | null = null;
+  let scopedMcp: ReturnType<typeof registerScopedZoteroMcpScope> | undefined;
+  let workspace = retained?.workspace;
+  let contextFile: AgyContextFile | null = null;
+  let stopObservingMcp: (() => void) | undefined;
   const runId = createJournalId("agy");
   const execution = turn.executionRequest;
   const clearMcp = () => scopedMcp?.clear();
-  if (deps.registerMcpScope && deps.prepareWorkspace) {
-    try {
-      scopedMcp = deps.registerMcpScope({
-        runtimeAuthority: "antigravity",
-        conversationKey: turn.conversationKey,
-        runId,
-        libraryID: execution?.libraryID ?? turn.libraryID,
-        kind: execution?.conversationKind,
-        paperItemID: turn.paperItemID,
-        activeItemId: execution?.activeItemId ?? turn.activeItemId,
-        activeNoteId: execution?.activeNoteContext?.noteId,
-        conversationGeneration: execution?.conversationGeneration,
-        executionContext: execution?.executionContext,
-        userText: execution?.userText,
-        turnPaperScope: execution?.turnPaperScope ?? turn.turnPaperScope,
-        attachedConversationScope:
-          execution?.attachedConversationScope ??
-          turn.attachedConversationScope,
-        requestInteraction:
-          settings.permissionMode === "default"
-            ? panel.onHostInteraction
-            : undefined,
-      });
+  const accumulator = new AgyTextAccumulator();
+  let initializedAt: number | undefined;
+  let firstTextAt: number | undefined;
+  let launchedAt: number | undefined;
+  let dispatchedAt: number | undefined;
+  let closeReason = "complete";
+  let rememberedId = storedConversationId;
+  let rememberTask: Promise<void> | undefined;
+  const remember = (id: string) => {
+    if (!id || rememberedId === id) return;
+    rememberedId = id;
+    if (retained) retained.nativeId = id;
+    rememberTask = (
+      overrides.rememberConversationId
+        ? deps.rememberConversationId(key, id)
+        : rememberConversationId(key, id, expected)
+    ).catch(() => {
+      appLogger.warn("Antigravity: could not save native conversation ID");
+    });
+  };
+
+  try {
+    if (deps.registerMcpScope && deps.prepareWorkspace && mcpServerUrl) {
+      scopedMcp = deps.registerMcpScope(
+        {
+          runtimeAuthority: "antigravity",
+          conversationKey: key,
+          profileSignature: expected?.profile,
+          instanceID: expected?.instanceID,
+          runId,
+          libraryID:
+            summary?.libraryID ?? execution?.libraryID ?? turn.libraryID,
+          kind: summary?.kind ?? execution?.conversationKind,
+          paperItemID: summary?.paperItemID ?? turn.paperItemID,
+          activeItemId: execution?.activeItemId ?? turn.activeItemId,
+          activeNoteId: execution?.activeNoteContext?.noteId,
+          conversationGeneration: generation,
+          executionContext: execution?.executionContext,
+          userText: execution?.userText,
+          turnPaperScope: execution?.turnPaperScope ?? turn.turnPaperScope,
+          attachedConversationScope:
+            execution?.attachedConversationScope ??
+            turn.attachedConversationScope,
+          requestInteraction:
+            settings.permissionMode === "default"
+              ? panel.onHostInteraction
+              : undefined,
+        },
+        retained ? { token: retained.token } : undefined,
+      );
+      if (retained) retained.clearScope = clearMcp;
       turn.signal?.addEventListener("abort", clearMcp, { once: true });
-      if (turn.signal?.aborted) clearMcp();
-      const mcpServerUrl = deps.getMcpServerUrl?.() || "";
-      if (!turn.signal?.aborted && scopedMcp.token && mcpServerUrl) {
-        workspace = await deps.prepareWorkspace({
-          conversationKey: turn.conversationKey,
+      assertCurrent();
+      workspace ??=
+        (await deps.prepareWorkspace({
+          conversationKey: key,
           scopeToken: scopedMcp.token,
           mcpServerUrl,
-        });
-      }
-    } catch {
-      // MCP setup failure should not prevent turn from attempting basic run
+        })) ?? undefined;
     }
-  }
+    let prompt = inlinePrompt;
+    if (inlinePrompt.length > AGY_INLINE_PROMPT_LIMIT) {
+      const fileText =
+        question.length > AGY_INLINE_PROMPT_LIMIT / 2 ? inlinePrompt : context;
+      contextFile = await deps.writeContextFile(fileText, workspace);
+      prompt = contextFile
+        ? buildAgyFileContextPrompt({
+            question:
+              fileText === context
+                ? question
+                : "The question is at the end of the file below.",
+            contextPath: contextFile.path,
+            contextChars: fileText.length,
+          })
+        : `<question>\n${question}\n</question>\n\n${context}`;
+    }
+    assertCurrent();
 
-  const { permissionMode, effort } = settings;
-  const accumulator = new AgyTextAccumulator();
-  panel.onStatus("Antigravity is thinking");
-
-  const addDirs: string[] = [];
-  if (contextFile) addDirs.push(contextFile.dir);
-  if (workspace && settings.cwd && settings.cwd !== workspace.dir) {
-    addDirs.push(settings.cwd);
-  }
-
-  const stopObservingMcp = addZoteroMcpToolActivityObserver((event) => {
-    if (event.runId === runId && panel.isLive()) panel.onMcpActivity?.(event);
-  });
-  const result = await deps
-    .runTurn({
+    const addDirs: string[] = [];
+    if (contextFile && !workspace) addDirs.push(contextFile.dir);
+    if (workspace && settings.cwd && settings.cwd !== workspace.dir)
+      addDirs.push(settings.cwd);
+    const options: AgyTurnOptions = {
       binaryPath: settings.binaryPath,
       prompt,
       ...(addDirs.length ? { addDirs } : {}),
-      model: toAntigravityModelPref(turn.model ?? settings.model) || undefined,
-      effort: effort === "auto" ? undefined : effort,
-      mode: permissionMode === "plan" ? "plan" : undefined,
+      model,
+      effort: settings.effort === "auto" ? undefined : settings.effort,
+      mode: settings.permissionMode === "plan" ? "plan" : undefined,
       settingsPath: workspace?.settingsPath,
       conversationId: storedConversationId || undefined,
       cwd: workspace?.dir ?? settings.cwd,
       signal: turn.signal,
-      onEvent: (event) => {
-        if (event.kind === "init" && event.conversationId) {
-          void deps.rememberConversationId(
-            turn.conversationKey,
-            event.conversationId,
-          );
+      onEvent(event) {
+        if (event.kind === "init") {
+          initializedAt = Date.now();
+          remember(event.conversationId);
+        }
+        if (event.kind === "result") {
+          if (event.response.trim()) firstTextAt ??= Date.now();
+          clearMcp();
         }
         if (!panel.isLive()) return;
         if (event.kind === "text") {
@@ -429,12 +577,14 @@ export async function runAntigravityPanelTurn(
             event.delta,
             event.state,
           );
-          if (delta) panel.onDelta(delta);
+          if (delta) {
+            firstTextAt ??= Date.now();
+            panel.onDelta(delta);
+          }
         } else if (event.kind === "tool") {
           const finished = isFinishedStepState(event.state);
-          if (!finished) {
+          if (!finished)
             panel.onStatus(formatToolStatus(event.toolName, event.summary));
-          }
           panel.onActivity?.({
             stepIndex: event.stepIndex,
             toolName: event.toolName,
@@ -445,37 +595,100 @@ export async function runAntigravityPanelTurn(
           });
         }
       },
-    })
-    .finally(async () => {
-      stopObservingMcp();
-      turn.signal?.removeEventListener("abort", clearMcp);
-      try {
-        scopedMcp?.clear();
-      } catch {
-        /* ignore */
-      }
-      if (workspace && deps.removeWorkspace) {
-        await deps.removeWorkspace(workspace);
-      }
-      if (contextFile) {
-        await deps.removeContextFile(contextFile);
-      }
+    };
+    stopObservingMcp = addZoteroMcpToolActivityObserver((event) => {
+      if (event.runId === runId && panel.isLive()) panel.onMcpActivity?.(event);
     });
+    panel.onStatus("Antigravity is thinking");
+    if (
+      persistent &&
+      !retained &&
+      workspace &&
+      scopedMcp &&
+      summary?.instanceID
+    ) {
+      launchedAt = Date.now();
+      const sessionWorkspace = workspace;
+      const token = scopedMcp.token;
+      await trackAgyStart(async () => {
+        let opened: RetainedAgySession | undefined;
+        const transport = await openAgySession(options, launch, () => {
+          opened?.clearScope?.();
+          if (opened && !activeAgyTurns.has(key))
+            void closeAgyConversation(key, false, opened);
+        });
+        opened = retained = {
+          binding,
+          nativeId: storedConversationId,
+          token,
+          workspace: sessionWorkspace,
+          transport,
+          clearScope: clearMcp,
+        };
+        agySessions.set(key, opened);
+        if (agySessionsStopping())
+          await closeAgyConversation(key, true, opened);
+        assertCurrent();
+      });
+    }
+    dispatchedAt = Date.now();
+    const result = await (retained
+      ? retained.transport.send(options)
+      : deps.runTurn(options));
+    remember(result.conversationId);
+    await rememberTask;
+    assertCurrent();
+    if (retained?.transport.reusable || !persistent) {
+      sentSystemContextByConversation.set(key, contextFingerprint);
+    }
+    const usage = toUsageStats(result.usage);
+    if (usage && panel.isLive()) panel.onUsage?.(usage);
 
-  sentSystemContextByConversation.set(turn.conversationKey, contextFingerprint);
-  const conversationId = result.conversationId || storedConversationId;
-  if (conversationId && conversationId !== storedConversationId) {
-    await deps.rememberConversationId(turn.conversationKey, conversationId);
+    let text = result.response.trim() ? result.response : accumulator.text();
+    if (result.deniedActions.length) {
+      text +=
+        "\n\n> Antigravity was not allowed to: " +
+        result.deniedActions.join("; ") +
+        ". Change the Antigravity permission mode in settings to allow it.";
+    }
+    return { text, completion: { status: "complete" } };
+  } catch (error) {
+    closeReason = turn.signal?.aborted ? "cancelled" : "failed";
+    clearMcp();
+    if (retained) await closeAgyConversation(key, true, retained);
+    await rememberTask;
+    throw error;
+  } finally {
+    clearMcp();
+    stopObservingMcp?.();
+    turn.signal?.removeEventListener("abort", clearMcp);
+    if (retained) {
+      retained.clearScope = undefined;
+      if (!retained.transport.reusable) {
+        if (closeReason === "complete") closeReason = "transport closed";
+        await closeAgyConversation(key, false, retained);
+      }
+    } else {
+      if (workspace && deps.removeWorkspace)
+        await deps.removeWorkspace(workspace);
+      if (contextFile && !workspace) await deps.removeContextFile(contextFile);
+    }
+    if (persistent)
+      appLogger.debug("Antigravity timing", {
+        reused,
+        outcome: closeReason,
+        contextPreparationMs: readyAt - timingStart,
+        launchMs:
+          launchedAt !== undefined && dispatchedAt !== undefined
+            ? dispatchedAt - launchedAt
+            : undefined,
+        dispatchMs:
+          dispatchedAt !== undefined ? dispatchedAt - timingStart : undefined,
+        initMs:
+          initializedAt !== undefined ? initializedAt - timingStart : undefined,
+        firstTextMs:
+          firstTextAt !== undefined ? firstTextAt - timingStart : undefined,
+        elapsedMs: Date.now() - timingStart,
+      });
   }
-  const usage = toUsageStats(result.usage);
-  if (usage && panel.isLive()) panel.onUsage?.(usage);
-
-  let text = result.response.trim() ? result.response : accumulator.text();
-  if (result.deniedActions.length) {
-    text +=
-      "\n\n> Antigravity was not allowed to: " +
-      result.deniedActions.join("; ") +
-      ". Change the Antigravity permission mode in settings to allow it.";
-  }
-  return { text, completion: { status: "complete" } };
 }

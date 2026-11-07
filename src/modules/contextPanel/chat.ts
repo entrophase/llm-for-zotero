@@ -6573,6 +6573,7 @@ export async function retryLatestAssistantResponse(
   onProviderDispatch?: () => void,
   retryOptions?: { continueIncomplete?: boolean },
 ) {
+  const turnStartedAt = Date.now();
   if (resolveConversationSystemForItem(item) === "dsh") return false;
   const ownershipLease = capturePanelOperationLease(body);
   if (
@@ -7409,6 +7410,7 @@ export async function retryLatestAssistantResponse(
         ? await runAntigravityPanelTurn(
             {
               conversationKey,
+              startedAt: turnStartedAt,
               messages: finalPrepared.messages,
               model: effectiveRequestConfig.model,
               attachedPastChatText: codexPastChatText || undefined,
@@ -9172,6 +9174,7 @@ async function sendAgentQuestion(opts: {
 export async function sendQuestion(
   opts: import("./types").SendQuestionOptions,
 ) {
+  const turnStartedAt = Date.now();
   const {
     body,
     item,
@@ -10483,6 +10486,7 @@ export async function sendQuestion(
         ? await runAntigravityPanelTurn(
             {
               conversationKey,
+              startedAt: turnStartedAt,
               messages: finalPrepared.messages,
               model: effectiveRequestConfig.model,
               attachedPastChatText: codexPastChatText || undefined,

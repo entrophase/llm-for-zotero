@@ -1,3 +1,4 @@
+import { cancelAgyConversation } from "../../antigravity/sessionPool";
 import { cancelDshConversation } from "../../dsh/lifecycle";
 import type {
   Message,
@@ -373,6 +374,7 @@ export function clearConversationOwnedRuntimeState(
 
   cancelDshConversation(key);
   bumpConversationWriteGeneration(key);
+  cancelAgyConversation(key);
 
   chatHistory.delete(key);
   // The Task progress record goes with the conversation; a conversation

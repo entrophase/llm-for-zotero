@@ -1,3 +1,4 @@
+import { setAgyConversationView } from "../../antigravity/sessionPool";
 import { clearDshConversation } from "../../dsh/store";
 import { clearConversationOwnedRuntimeState } from "./state";
 import { appLogger } from "../../core/logging";
@@ -2184,6 +2185,12 @@ export function setupHandlers(
       surface: selectionSurface(),
     });
     panelRoot.dataset.conversationSystem = currentConversationSystem;
+    setAgyConversationView(
+      body,
+      currentConversationSystem === "antigravity"
+        ? conversationKey ?? undefined
+        : undefined,
+    );
     syncQueuedFollowUpRegistration();
     const currentBasePaperItemID = noteSession
       ? noteSession.parentItemId || 0
@@ -9894,6 +9901,7 @@ export function setupHandlers(
     disposePendingDeletionSubscriptionForBody(body);
     disposeConversationCatalogSubscriptionForBody(body);
     void releaseClaudeRuntimeForBody(body);
+    setAgyConversationView(body);
     if (setupHandlersCleanupByBody.get(body) === cleanupSetupHandlers) {
       setupHandlersCleanupByBody.delete(body);
     }

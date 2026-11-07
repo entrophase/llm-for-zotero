@@ -253,53 +253,70 @@ describe("Zotero MCP server", function () {
     assert.equal((await call())[0], 401);
   });
 
-  it("refuses a DSH write when its credential is revoked while approval is open", async function () {
-    const registry = new AgentToolRegistry(
-      new ActionContractService({ getItem: () => null } as never),
-    );
-    let writes = 0;
-    let approve: ((value: { approved: boolean }) => void) | undefined;
-    const tool = createWriteTool("note_write");
-    tool.execute = async () => {
-      writes++;
-      return { content: { applied: true }, effect: "applied" };
-    };
-    registry.register(tool);
-    registerMcpServer({ toolRegistry: registry, zoteroGateway: {} as never });
-    const scope = registerScopedZoteroMcpScope({
-      runtimeAuthority: "dsh",
-      conversationKey: 1e15 + 999,
-      libraryID: 1,
-      kind: "global",
-      requestInteraction: () =>
-        new Promise((resolve) => {
-          approve = resolve;
-        }),
-    });
-    const result = invokeMcpEndpoint({
-      token: scope.token,
-      headers: { [ZOTERO_MCP_SCOPE_HEADER]: scope.token },
-      body: {
-        jsonrpc: "2.0",
-        id: 72,
-        method: "tools/call",
-        params: { name: "note_write", arguments: { libraryID: 1 } },
-      },
-    });
-    try {
-      while (!approve) await new Promise((resolve) => setTimeout(resolve, 0));
-      scope.clear();
-      approve({ approved: true });
-      const reply = JSON.parse((await result)[2]);
-      assert.isTrue(
-        Boolean(reply.error || reply.result?.isError),
-        JSON.stringify(reply),
+  for (const runtimeAuthority of ["dsh", "antigravity"] as const) {
+    it(`refuses a ${runtimeAuthority} write when its turn ends during approval`, async function () {
+      const registry = new AgentToolRegistry(
+        new ActionContractService({ getItem: () => null } as never),
       );
-      assert.equal(writes, 0);
-    } finally {
-      scope.clear();
-    }
-  });
+      let writes = 0;
+      let approve: ((value: { approved: boolean }) => void) | undefined;
+      const tool = createWriteTool("note_write");
+      tool.execute = async () => {
+        writes++;
+        return { content: { applied: true }, effect: "applied" };
+      };
+      registry.register(tool);
+      registerMcpServer({ toolRegistry: registry, zoteroGateway: {} as never });
+      const scope = registerScopedZoteroMcpScope({
+        runtimeAuthority,
+        runId: "first",
+        conversationKey: 1e15 + 999,
+        libraryID: 1,
+        kind: "global",
+        requestInteraction: () =>
+          new Promise((resolve) => {
+            approve = resolve;
+          }),
+      });
+      const result = invokeMcpEndpoint({
+        token: scope.token,
+        headers: { [ZOTERO_MCP_SCOPE_HEADER]: scope.token },
+        body: {
+          jsonrpc: "2.0",
+          id: 72,
+          method: "tools/call",
+          params: { name: "note_write", arguments: { libraryID: 1 } },
+        },
+      });
+      let next: ReturnType<typeof registerScopedZoteroMcpScope> | undefined;
+      try {
+        while (!approve) await new Promise((resolve) => setTimeout(resolve, 0));
+        scope.clear();
+        if (runtimeAuthority === "antigravity") {
+          next = registerScopedZoteroMcpScope(
+            {
+              runtimeAuthority,
+              runId: "next",
+              conversationKey: 1e15 + 999,
+              libraryID: 1,
+              kind: "global",
+            },
+            { token: scope.token },
+          );
+        }
+        approve({ approved: true });
+        const reply = JSON.parse((await result)[2]);
+        assert.isTrue(
+          Boolean(reply.error || reply.result?.isError),
+          JSON.stringify(reply),
+        );
+        assert.equal(writes, 0);
+      } finally {
+        next?.clear();
+        scope.clear();
+      }
+    });
+  }
 
   it("exposes only the owning live scope revision to host finalization", function () {
     const old = registerScopedZoteroMcpScope(

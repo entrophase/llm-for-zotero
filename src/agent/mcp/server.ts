@@ -1990,6 +1990,8 @@ function resolveCurrentScopedMcpCall(
   if (
     !current ||
     current.signal?.aborted ||
+    (scope.runtimeAuthority === "antigravity" &&
+      (current.runId !== scope.runId || current.signal !== scope.signal)) ||
     current.conversationKey !== scope.conversationKey ||
     current.conversationGeneration !== scope.conversationGeneration ||
     current.instanceID !== scope.instanceID ||
@@ -2787,6 +2789,7 @@ async function handleToolsCall(
       deps.zoteroGateway,
     );
     toolContext.extendAttachedConversationScope = (ref) =>
+      isScopedMcpCallCurrent(headers, scope) &&
       extendScopedMcpAttachedConversationScope(headers, ref);
     let prepared = await deps.toolRegistry.prepareExecution(
       {
@@ -2816,7 +2819,16 @@ async function handleToolsCall(
       },
     );
 
+    const isExpiredAntigravityCall = () =>
+      scope?.runtimeAuthority === "antigravity" &&
+      !isScopedMcpCallCurrent(headers, scope);
+    const expiredResult = (actionReceipts?: AgentActionReceipt[]) => {
+      const error = "The Antigravity turn has ended.";
+      completeActivity({ ok: false, error, actionReceipts });
+      return { content: [{ type: "text" as const, text: error }], isError: true };
+    };
     while (prepared.kind === "confirmation") {
+      if (isExpiredAntigravityCall()) return expiredResult();
       if (!scope?.requestInteraction) {
         const error =
           "The native turn has no host interaction channel for this review. No action was applied.";
@@ -2830,6 +2842,9 @@ async function handleToolsCall(
             kind: "result" as const,
             execution: await prepared.deny(resolution.data),
           };
+    }
+    if (isExpiredAntigravityCall()) {
+      return expiredResult(prepared.execution.result.actionReceipts);
     }
     if (scope)
       scope.clarificationHistory = toolContext.request.clarificationHistory;
@@ -2862,6 +2877,7 @@ async function handleToolsCall(
                   runId: scope?.runId,
                 }),
           };
+    if (isExpiredAntigravityCall()) return expiredResult();
     rememberDocumentReadObservations(headers, readObservations);
     // The outside papers a document of this run may cite: what
     // literature_search and literature_read returned.
